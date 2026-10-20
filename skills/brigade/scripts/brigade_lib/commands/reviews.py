@@ -21,12 +21,24 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.reviews import latest_verdict, pass_check, pass_json, record_pass, round_decision, verify_edits, write_threads
+from brigade_lib.items import announce_archive
+from brigade_lib.reviews import latest_verdict, pass_check, pass_json, pass_stats, record_pass, round_decision, verify_edits, write_threads
 from brigade_lib.shared import BrigadeError, clean
-from brigade_lib.store import EDITS_VERDICT, ROUND_BUDGET, ROUND_KIND, THREAD_COMMAND_ROLES, VERDICTS
+from brigade_lib.store import EDITS_VERDICT, REASONS, ROUND_KIND, THREAD_COMMAND_ROLES, VERDICTS
 from brigade_lib.wake import closing_options, open_item_decisions, option_key
 
 COMMANDS = ("thread", "pass", "edits", "86")
+
+
+def non_negative_int(text):
+    """An argparse type that returns a non-negative integer and refuses anything else."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid non-negative integer value: {text!r}")
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"{value} is negative")
+    return value
 
 
 def register_thread(sub):
@@ -48,9 +60,12 @@ def register_pass(sub):
         "child rows come from a ## Threads section of reports/<dish>.md, which this command reads and takes no "
         "flag for.\n"
         "\n"
-        "That section starts with the heading `## Threads` on a line of its own, and every other line of it that "
-        "is not blank, is not a heading, and is not inside a fenced block that opens after up to three spaces is "
-        "one list item of the form - <role> `<thread id>` <seat>.\n"
+        "That section starts with the heading `## Threads` on a line of its own. A line of it that opens a fence "
+        "after up to three spaces is not read, and neither is a line until that fence closes. Every other "
+        "non-blank line of it is skipped when it is plain prose, that is when it starts, after any leading "
+        "whitespace, with neither a list marker nor a `#`, holds no backticked thread id, and names no lowercase "
+        "child role. A list marker is a hyphen, an asterisk, a plus, a bullet, or a number followed by a dot or a "
+        "closing parenthesis.\n"
         "\n"
         "This example uses made-up ids. A report whose worker used two children holds the heading `## Threads` and "
         "then two items, one for a code delegate whose thread id is `mcp:00000000-0000-4000-8000-000000000001` and "
@@ -60,8 +75,10 @@ def register_pass(sub):
         "The three roles a child may take are code delegate, claims check, and architect runner. A child whose "
         "role is any of the other four is refused, because dish --thread writes the worker rows, "
         "--reviewer-thread writes the reviewer row, and the thread command writes the panel member row. A "
-        "report with no ## Threads section adds no row and is not an error. A line that is not one such item is "
-        "refused by its number. An item whose thread id the table would change is refused by its number too. "
+        "report with no ## Threads section adds no row and is not an error. A non-blank line that is read, is not "
+        "prose and is not of that form is refused by its number. An item whose thread id the table would change is "
+        "refused by "
+        "its number too. "
         "So is a heading deeper than the section's own, and so is a second ## Threads "
         "heading while the first is still open, and those two end the scan. A role that is well formed but is not "
         "one of the three is refused by its number and named.\n"
@@ -83,6 +100,9 @@ def register_pass(sub):
                         "and no other verdict takes it; refused with one line that says why when its edits cannot be read")
     a.add_argument("--reviewer-thread", default="",
                    help="the reviewer's thread id; writes the reviewer row of threads.tsv for this attempt")
+    a.add_argument("--reason", default="", choices=REASONS,
+                   help=f"why the review sent the work back, one of {', '.join(REASONS)}; --reason goes only with "
+                        "--verdict send-back")
     kind = a.add_mutually_exclusive_group()
     kind.add_argument("--member", action="store_true",
                       help="a panel member's row that does not carry the item's verdict; the dish is left as it is")
@@ -92,6 +112,15 @@ def register_pass(sub):
     a.add_argument("dish")
     a.add_argument("--sha", required=True)
     a.add_argument("--json", action="store_true", help="print verdict, author, verifier, note, and crossFamily of the latest row")
+    stats_help = (
+        "Print the first-pass rate overall and per author model. An item has at least one non-member pass.tsv row. "
+        "Its first non-member row in table order sets its author and first verdict. The rate is the percentage of items whose first verdict is pass. Every other verdict counts as a failure. "
+        "Select the last N items by the at cell of their last non-member row, descending. Ties keep the order in which items first occur in the table. Count all non-member send-back rows of those items by reason. "
+        f"An empty reason or one outside {', '.join(REASONS)} counts as unrecorded. An empty window prints no items with a verdict."
+    )
+    a = t.add_parser("stats", help=stats_help, description=stats_help)
+    a.add_argument("--last", type=non_negative_int, default=20,
+                   help="how many items to cover, counting back from the most recently reviewed; default 20")
 
 
 def register_edits(sub):
@@ -119,7 +148,7 @@ def register_86(sub):
     a.add_argument("--default")
     a.add_argument("--dish", default="")
     a.add_argument("--round-budget", action="store_true",
-                   help=f"with --dish: write the decision a dish owes at {ROUND_BUDGET} send-backs; takes no question, options, or default")
+                   help="with --dish: write the decision a dish owes at its stored roundBudget send-backs; takes no question, options, or default")
     a = t.add_parser("answer")
     a.add_argument("id")
     a.add_argument("--answer", required=True)
@@ -136,6 +165,8 @@ def register(sub):
 def handle(restaurant, args):
     if args.command == "edits":
         return verify_edits(restaurant, args.dish, args.from_sha, args.to)
+    if args.command == "pass" and args.action == "stats":
+        return pass_stats(restaurant, args.last)
     if args.command in ("thread", "pass", "86"):
         with restaurant.checked():
             return seam.command(restaurant, args)
@@ -149,9 +180,11 @@ def handle_locked(restaurant, args, view):
         return f"{args.dish}: {args.role} {'on record' if added else 'already on record'}"
     if args.command == "pass":
         if args.action == "record":
-            return record_pass(restaurant, args.dish, args.pr, args.sha, args.verdict, args.author, args.verifier,
-                               args.note, args.same_family, args.report, args.member, args.late, args.edits,
-                               args.reviewer_thread)
+            result = record_pass(restaurant, args.dish, args.pr, args.sha, args.verdict, args.author, args.verifier,
+                                 args.note, args.same_family, args.report, args.member, args.late, args.edits,
+                                 args.reviewer_thread, args.reason)
+            announce_archive(restaurant, args.dish, "review", thread=args.reviewer_thread)
+            return result
         ok, why = pass_check(restaurant, args.dish, args.sha)
         latest = latest_verdict(restaurant, args.dish, args.sha) if args.json else None
         if latest is not None:

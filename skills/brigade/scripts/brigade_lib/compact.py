@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -18,20 +19,35 @@ SETTINGS_KEY = "autoCompactWindow"
 SETTINGS_MODE = "100644"
 
 
+def refuse_setting(key, value, why):
+    """Print the warning and refuse a present restaurant.json setting that does not parse.
+
+    The warning goes to standard error, then the same sentence raises. A missing key takes its default
+    and never reaches here.
+    """
+    text = f"restaurant.json {key} {value!r} is invalid: {why}"
+    print(f"brigade: warning: {text}", file=sys.stderr)
+    raise BrigadeError(text)
+
+
 def effective_cap(meta):
-    """The cap this restaurant enforces. A missing or non-integer contextCap reads as the default."""
-    value = meta.get("contextCap")
-    if isinstance(value, bool) or not isinstance(value, int):
+    """The cap this restaurant enforces. A missing contextCap takes 300000, and a present value that is not an integer, or is a boolean, is refused."""
+    if "contextCap" not in meta:
         return DEFAULT_CONTEXT_CAP
+    value = meta["contextCap"]
+    if isinstance(value, bool) or not isinstance(value, int):
+        refuse_setting("contextCap", value, "it is not a whole number")
     return value
 
 
 def effective_provider(meta):
-    """The coordinator host. A missing or unknown coordinatorProvider reads as claude."""
-    value = meta.get("coordinatorProvider")
-    if value in PROVIDERS:
-        return value
-    return DEFAULT_PROVIDER
+    """The coordinator host. A missing coordinatorProvider takes claude, and a present one that is not a known provider is refused."""
+    if "coordinatorProvider" not in meta:
+        return DEFAULT_PROVIDER
+    value = meta["coordinatorProvider"]
+    if value not in PROVIDERS:
+        refuse_setting("coordinatorProvider", value, "it is not claude or other")
+    return value
 
 
 def parse_context_cap(text):
@@ -69,6 +85,42 @@ def _object(raw):
     except (UnicodeDecodeError, ValueError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def existing_cap(project_root):
+    """The integer autoCompactWindow the settings file already holds, or None.
+
+    None covers an unreadable file, a file that is not a strict JSON object, a missing key, and a value that is a
+    boolean or not an integer. This reads only, so it applies none of the write refusals in _load.
+    """
+    try:
+        raw = settings_path(project_root).read_bytes()
+    except OSError:
+        return None
+    value = _object(raw)
+    if value is None:
+        return None
+    cap = value.get(SETTINGS_KEY)
+    if isinstance(cap, bool) or not isinstance(cap, int):
+        return None
+    return cap
+
+
+def drift_line(meta):
+    """The one line naming a settings file that does not hold the effective cap, or None when it does.
+
+    None covers a provider that does not read as claude and a file that already holds the effective cap.
+    """
+    if effective_provider(meta) != "claude":
+        return None
+    cap = effective_cap(meta)
+    path = settings_path(meta["projectRoot"])
+    held = existing_cap(meta["projectRoot"])
+    if held == cap:
+        return None
+    if held is None:
+        return f"{path} holds no integer {SETTINGS_KEY}; run brigade.py set --context-cap {cap}"
+    return f"{path} holds {SETTINGS_KEY} {held}, not {cap}; run brigade.py set --context-cap {cap}"
 
 
 def _existing(directory):
@@ -224,6 +276,9 @@ def _with_cap(text, cap):
 
 def sync_meta(meta):
     """Write autoCompactWindow into the project's settings file and keep every other byte of it.
+
+    Only two callers reach this. Creation with --context-cap, creation without --context-cap over a file that holds no
+    integer cap, and set --context-cap. Every other path leaves the settings file alone.
 
     A file that holds no strict JSON object, a settings directory reached through a symbolic link, an entry or a
     resolved file that either lookup in _git_refusal reports as tracked or unreadable, and a git command that cannot

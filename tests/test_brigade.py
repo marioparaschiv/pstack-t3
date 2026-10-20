@@ -156,8 +156,10 @@ class SpendControlsTest(BrigadeTest):
 class OpenFlagHelpTest(BrigadeTest):
     """The two creation-only flags, as the open help states them to a user reopening a store."""
 
-    CAP_HELP = ("--context-cap CONTEXT_CAP on creation, set the context cap; missing uses 300000; "
-                "an existing store syncs its saved cap")
+    CAP_HELP = ("--context-cap CONTEXT_CAP on creation, set the context cap; missing uses 300000, "
+                "except claude adopts an existing integer autoCompactWindow from the project's "
+                ".claude/settings.local.json; claude attempts to write the cap there unless adopting it; "
+                "an existing store is left alone")
     PROVIDER_HELP = ("--coordinator-provider COORDINATOR_PROVIDER on creation, choose claude or other; "
                      "missing uses claude; an existing store uses its saved provider")
 
@@ -222,6 +224,47 @@ class ReleaseSectionsTest(unittest.TestCase):
                              "## 0.4.2 (2026-10-14)\n\n### Fixed\n\n- two\n"
                              "\nwould write this section to CHANGELOG.md\n"
                              "would delete changes/two.md\nnothing changed\n")
+
+
+class ChangeNoteDirTest(BrigadeTest):
+    """The changeNoteDir key: unset by default, set and cleared through set, refused when malformed."""
+
+    def meta(self):
+        return json.loads((self.at / "restaurant.json").read_text())
+
+    def test_set_records_a_normalized_directory_and_empty_clears_it(self):
+        self.open()
+        self.assertNotIn("changeNoteDir", self.meta())
+        meta = json.loads(self.brigade("set", "--change-note-dir", "notes/sub/"))
+        self.assertEqual(meta["changeNoteDir"], "notes/sub")
+        self.assertEqual(self.meta()["changeNoteDir"], "notes/sub")
+        meta = json.loads(self.brigade("set", "--change-note-dir", ""))
+        self.assertNotIn("changeNoteDir", meta)
+        self.assertNotIn("changeNoteDir", self.meta())
+
+    def test_set_refuses_a_bad_directory_and_writes_nothing(self):
+        self.open()
+        for text in ("/abs", "../up", "a/../..", "a,b", "has space"):
+            with self.subTest(text=text):
+                before = (self.at / "restaurant.json").read_bytes()
+                error = self.brigade("set", "--change-note-dir", text, ok=False)
+                self.assertIn("--change-note-dir", error)
+                self.assertIn(f"got '{text}'", error)
+                self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+
+    def test_set_refuses_a_stored_directory_that_does_not_parse(self):
+        self.open()
+        path = self.at / "restaurant.json"
+        meta = self.meta()
+        for stored in ("/abs", 5):
+            with self.subTest(stored=stored):
+                meta["changeNoteDir"] = stored
+                path.write_text(json.dumps(meta))
+                before = path.read_bytes()
+                error = self.brigade("set", "--reporting", "digest", ok=False)
+                self.assertIn("changeNoteDir", error)
+                self.assertEqual(path.read_bytes(), before)
+                del meta["changeNoteDir"]
 
 
 if __name__ == "__main__":

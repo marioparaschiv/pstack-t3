@@ -59,145 +59,31 @@ try:
     import landing_lib.governor as _governor_mod
     import landing_lib.store as _store_mod
     import landing_lib.policy as _policy_mod
+    import landing_lib.sizes as _sizes_mod
+    import landing_lib.genmap as _genmap_mod
     import landing_lib.leases as _leases_mod
     import landing_lib.queue as _queue_mod
     import landing_lib.merge as _merge_mod
     import landing_lib.contests as _contests_mod
     import landing_lib.drain as _drain_mod
     import landing_lib.times as _times_mod
-    for _mod in (_governor_mod, _store_mod, _policy_mod, _leases_mod, _queue_mod,
+    import landing_lib._land.parser as _parser_mod
+    for _mod in (_governor_mod, _store_mod, _policy_mod, _sizes_mod, _genmap_mod, _leases_mod, _queue_mod,
                 _merge_mod, _contests_mod, _drain_mod, _times_mod):
         globals().update({k: v for k, v in vars(_mod).items() if not k.startswith("__") and k != "seam"})
+    _build_parser = _parser_mod.build_parser
 finally:
     _sys.dont_write_bytecode = _bw
     _drop_cached_landing("landing_lib", _pkg)
     _sys.modules.update(_prior_landing)
 del _bw, _drop_cached_landing, _pkg, _alias, _libdir, _types, _uuid, _prior_landing
-del _foundation_mod, _governor_mod, _store_mod, _policy_mod, _leases_mod, _queue_mod
-del _merge_mod, _contests_mod, _drain_mod, _times_mod, _seam_bootstrap, _mod
+del _foundation_mod, _governor_mod, _store_mod, _policy_mod, _sizes_mod, _genmap_mod, _leases_mod, _queue_mod
+del _merge_mod, _contests_mod, _drain_mod, _times_mod, _seam_bootstrap, _mod, _parser_mod
 
 def parser():
-    top = argparse.ArgumentParser(prog="land.py", description=__doc__.splitlines()[0])
-    top.add_argument("--repo", default=".", help="any checkout of the repository (default: current directory)")
-    sub = top.add_subparsers(dest="command", required=True)
-
-    p = sub.add_parser("init", help="write the repository's landing contract")
-    p.add_argument("--trunk", required=True, help="branch on the remote, or a lane name in local mode")
-    p.add_argument("--mode", choices=MODES + tuple(LEGACY_MODES), required=True,
-                   help="human: PRs you merge; merge: PRs the queue merges; push: no PRs, the queue pushes trunk; local: a lane ref")
-    p.add_argument("--remote", default="origin")
-    p.add_argument("--base", default="", help="local mode: the commit the lane starts from")
-    p.add_argument("--check", action="append", default=[], help="command that must pass before landing; repeatable")
-    p.add_argument("--setup", default="", help="command run before checks in the clean integration worktree, such as npm ci")
-    p.add_argument("--batch", type=int, default=1, help="entries checked together; a failed batch lands one at a time")
-    p.add_argument("--timeout", type=int, default=1800, help="seconds before a check is killed")
-    p.add_argument("--merge-method", choices=MERGE_METHODS, default=None,
-                   help="merge mode: how the queue merges its PRs, checked against the repository whenever it is set. "
-                        "omitted in merge mode, init stores the one allowed method, or merge when gh cannot say")
-    p.add_argument("--cap", type=int, help="most changes in flight on the repository at once; 0 clears it")
-
-    p = sub.add_parser("cap", help="set the most changes in flight on the repository at once; 0 clears it")
-    p.add_argument("count", type=int)
-
-    mode_help = "switch human, merge, or push when the queue is empty. --merge-method may change while entries are in flight"
-    p = sub.add_parser("mode", help=mode_help, description=mode_help)
-    p.add_argument("mode", choices=MODES + tuple(LEGACY_MODES))
-    p.add_argument("--merge-method", choices=MERGE_METHODS)
-
-    times_help = ("report submit-to-landed minutes for the last N landed entries, one line per entry then a summary line. "
-                  "A line holds the entry's id, holder, PR, and minutes to one decimal, and the PR prints - when the entry has none. "
-                  "The summary line is n=<count> median=<m> p90=<m> max=<m> skipped=<k>, where median and p90 are the "
-                  "nearest-rank 50th and 90th percentiles. An entry in state landed with no landed log row is not a line and is "
-                  "counted in skipped, even outside the --last window. --holder counts only that holder's entries. "
-                  "With nothing landed the three statistics print - and the command exits 0")
-    p = sub.add_parser("times", help=times_help, description=times_help)
-    p.add_argument("--last", type=int, default=30, metavar="N",
-                   help="report at most this many of the most recently landed entries (default: 30)")
-    p.add_argument("--holder", metavar="PREFIX",
-                   help="report this holder's entries; a value ending in / matches every holder under it")
-    p.add_argument("--json", action="store_true",
-                   help="print one JSON object instead of the lines; it holds entries, n, median, p90, max, and skipped, "
-                        "an empty PR is null, and the statistics are null when nothing landed")
-
-    owner_help = "<holder prefix>@<generation> of the coordinator writing; refused below that prefix's floor"
-    ruling_help = "<prefix>@<generation> of the writer, such as .admin/@2; refused below that prefix's floor"
-    p = sub.add_parser("owner", help="raise a holder prefix's generation floor; it never lowers")
-    p.add_argument("--prefix", required=True, help="a holder prefix ending in /, such as docs/")
-    p.add_argument("--generation", type=int, required=True)
-
-    p = sub.add_parser("lease", help="claim, renew, release, or list path leases")
-    t = p.add_subparsers(dest="action", required=True)
-    a = t.add_parser("claim")
-    a.add_argument("--holder", required=True)
-    a.add_argument("--paths", required=True, help="comma-separated files or directories; . is the whole repository")
-    a.add_argument("--ttl-hours", type=float, default=6)
-    a.add_argument("--owner", help=owner_help)
-    a = t.add_parser("renew")
-    a.add_argument("id")
-    a.add_argument("--ttl-hours", type=float, default=6)
-    a.add_argument("--if-live", action="store_true", help="refuse when the lease has expired instead of admitting it again")
-    a.add_argument("--owner", help=owner_help)
-    a = t.add_parser("release")
-    a.add_argument("id")
-    a.add_argument("--owner", help=owner_help)
-    t.add_parser("list")
-    a = t.add_parser("check", help="print what a claim would answer now; claims no lease and arms no reservation")
-    a.add_argument("--holder", required=True)
-    a.add_argument("--paths", required=True)
-    a = t.add_parser("reserve", help="reserve paths for a holder prefix by a ruling; prints S<n>")
-    a.add_argument("--for", dest="prefix", required=True, help="the winner's holder prefix, such as docs/")
-    a.add_argument("--paths", required=True, help="comma-separated files or directories")
-    a.add_argument("--ruling", required=True, help="the ruling this carries out, such as R4; a rerun returns the same S<n>")
-    a.add_argument("--ttl-hours", type=float, default=2, help="hours the reservation stands once it arms")
-    a.add_argument("--owner", required=True, help=ruling_help)
-    a = t.add_parser("unreserve", help="lift a reservation")
-    a.add_argument("id")
-    a.add_argument("--owner", required=True, help=ruling_help)
-
-    p = sub.add_parser("submit", help="queue a reviewed commit for landing")
-    p.add_argument("--holder", required=True)
-    p.add_argument("--branch", required=True)
-    p.add_argument("--sha", required=True, help="the exact SHA the review passed")
-    p.add_argument("--lease", required=True)
-    p.add_argument("--reviewer", required=True, help="provider/model of the reviewer that passed this SHA")
-    p.add_argument("--title", default="", help="human mode: the PR title (default: the last commit subject)")
-    p.add_argument("--body-file", default="", help="human mode: a file holding the PR body")
-    p.add_argument("--owner", help=owner_help)
-
-    p = sub.add_parser("share", help="set a holder prefix's share of the cap")
-    p.add_argument("--for", dest="prefix", required=True, help="a holder prefix ending in /, such as docs/")
-    p.add_argument("count", type=int)
-    p.add_argument("--clear", action="store_true", help="remove the share; pass 0")
-    p.add_argument("--owner", required=True, help=ruling_help)
-
-    p = sub.add_parser("contest", help="hold two holders' entries, then order them; waits for a running land")
-    g = p.add_mutually_exclusive_group(required=True)
-    g.add_argument("--holders", help="<a>,<b>: hold both holders' entries until settled; prints C<n>")
-    g.add_argument("--settle", help="C<n>: with --first, land the first holder before the other")
-    g.add_argument("--cancel", help="C<n>: remove the hold or the order")
-    p.add_argument("--first", help="with --settle, the holder that lands first")
-    p.add_argument("--owner", required=True, help=ruling_help)
-
-    sub.add_parser("land", help="drain the queue unless another run holds it")
-    sub.add_parser("resume", help="clear a pause after you did what its reason says")
-    p = sub.add_parser("status")
-    p.add_argument("id", nargs="?")
-    p.add_argument("--holder", help="list this holder's entries; a value ending in / matches every holder under it")
-    p.add_argument("--sha", help="with --holder, only entries at exactly this commit")
-    p = sub.add_parser("slot", help="run a heavy command under a governor slot")
-    p.add_argument("--exclusive", action="store_true", help="hold every slot: for benchmarks that need a quiet machine")
-    p.add_argument("--slots", metavar="N", default=None,
-                   help="take N worker slots in one admission. The default is 1. "
-                        "A value above the governor's worker slots is refused")
-    p.add_argument("--for", dest="slot_for", metavar="SECONDS", default=None,
-                   help=f"cap this exclusive hold at SECONDS. The default is {EXCLUSIVE_CAP:g}. "
-                        f"The maximum is {EXCLUSIVE_CAP_MAX:g}. A value over the default needs --reason")
-    p.add_argument("--reason", dest="slot_reason", metavar="TEXT", default=None,
-                   help="why this exclusive hold may pass the default cap. Waiters see it")
-    p.add_argument("--repo", dest="slot_repo", metavar="REPO", default=None,
-                   help="the repository to name in the holder record (default: current directory)")
-    p.add_argument("cmd", nargs=argparse.REMAINDER)
-    return top
+    return _build_parser(__doc__.splitlines()[0], exclusive_cap=EXCLUSIVE_CAP, modes=MODES,
+                         legacy_modes=LEGACY_MODES, merge_methods=MERGE_METHODS,
+                         author_policies=AUTHOR_POLICIES)
 
 
 def run(argv):
@@ -217,8 +103,15 @@ def run(argv):
         with slot(repo=args.slot_repo or args.repo, command=" ".join(command), count=count):
             return None, subprocess.run(command).returncode
     if args.command == "init":
+        pr_item_line = None if args.pr_item_line is None else args.pr_item_line == "on"
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
-                    args.merge_method, args.cap), 0
+                    args.merge_method, args.cap, args.generated, args.rebuild, args.author_policy, pr_item_line,
+                    args.heartbeat_ms, args.merge_heartbeat_ms, args.generated_map,
+                    size_max_tokens=args.max_file_tokens, size_baseline=args.size_baseline), 0
+    if args.command == "size":
+        if args.staged and args.all:
+            raise LandError("size takes --staged or --all, not both")
+        return size_report(args.repo, args.staged, args.all, args.shrink, args.baseline), 0
     if args.command == "times":
         return landing_times(args.repo, args.last, args.holder, args.json), 0
     with Store.for_repo(args.repo) as store:
@@ -237,6 +130,8 @@ def run(argv):
                 return lease_reserve(store, args.prefix, args.paths, args.ruling, args.ttl_hours, args.owner), 0
             if args.action == "unreserve":
                 return lease_unreserve(store, reservation_id(args.id), args.owner), 0
+            if args.action == "widen":
+                return lease_widen(store, lease_id(args.id), args.paths, args.ttl_hours, args.owner), 0
             number = lease_id(args.id)
             if args.action == "renew":
                 return lease_renew(store, number, args.ttl_hours, args.if_live, args.owner), 0
@@ -265,10 +160,34 @@ def run(argv):
         if args.holder:
             if args.id:
                 raise LandError("status takes an entry id or --holder, not both")
+            if args.json:
+                raise LandError("status --json takes no --holder")
             return holder_status(store, args.holder, args.sha), 0
         if args.sha:
             raise LandError("status --sha needs --holder")
-        return status(store, args.id), 0
+        if args.json:
+            if args.id:
+                raise LandError("status --json takes no id")
+            payload = {"mode": store.contract.get("mode"), "trunk": store.contract.get("trunk"),
+                       "generated": list(store.contract.get("generated") or []),
+                       "rebuild": store.contract.get("rebuild"),
+                       "map": list(store.contract.get("map") or [])}
+            if store.contract.get("sizeMaxTokens") is not None:
+                payload["sizeMaxTokens"] = store.contract.get("sizeMaxTokens")
+                payload["sizeBaseline"] = store.contract.get("sizeBaseline")
+            return json.dumps(payload, indent=2, sort_keys=True), 0
+        line = status(store, args.id)
+        if not args.id:
+            note = generated_note(store.contract.get("generated") or [], store.contract.get("rebuild"))
+            policy_note = author_policy_note(store.contract)
+            item_note = pr_item_line_note(store.contract)
+            heartbeat = heartbeat_note(store.contract)
+            size = size_note(store.contract)
+            text = " ".join(part for part in (note, policy_note, item_note, heartbeat, size) if part)
+            if text:
+                line = f"{line} {text}"
+            return line, 0
+        return line, 0
 
 
 def main(argv=None):

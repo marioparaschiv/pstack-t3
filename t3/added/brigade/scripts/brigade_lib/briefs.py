@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib.affected import layout as affected_layout, verify_text as affected_verify_text
 from brigade_lib.items import attempt_kind, latest_mode_note, menu_purpose, record_escalation
 from brigade_lib.leases import kind_limits
 from brigade_lib.reviews import fix_round_refusal, item_verdicts, send_backs
@@ -30,25 +31,13 @@ from brigade_lib.store import HELD_LOCKS, MODES, SCRATCH_KEY, SCRATCH_REFUSAL, V
 
 
 MEASURING_STATIONS = ("perf-issue", "hillclimb", "eval")
-TEST_STANDARD = (
-    "1. A test earns its place when it fails for a defect that no other check reports; name that defect in the test name.",
-    "2. A test that pins a reviewed defect stays; remove it only with a mutation that shows another check fails for the same change.",
-    "3. Use a rule in the project's static check, when it has one, when the property is visible in the text or the tree without running the code, with one passing and one failing fixture test.",
-    "4. Use a test when the property is behavior: exit codes, written files, ordering, refusals.",
-    "5. Call the command in the test process through the project's in-process test helper, when it has one; start a process only for a race, a signal, exit status, the environment, or help output, and say which.",
-    "6. Never assert a library's own wording.",
-    "7. Add a case to an existing table when the setup is the same.",
-    "8. A test that sleeps to order two processes names the review finding it pins.",
-    "9. Do not add a test for what the project's build already refuses.",
-    "10. The reviewer asks of each new test: which change to the code makes this fail and nothing else fail?",
-)
 
 
 @dataclass(frozen=True)
 class _Standing:
     """One rule the brief pastes verbatim, with the anchors that show the coordinator already stated it.
 
-    The placeholders in `text` and the anchors are `<reports>`, `<base>`, and `<scratch>`. A rule whose
+    The placeholders in `text` and the anchors are `<reports>` and `<scratch>`. A rule whose
     placeholder has no value is not rendered. A rule is dropped when the coordinator's context and verify
     text already hold every one of its anchors.
     """
@@ -64,14 +53,6 @@ _RULES = (
         ("<reports>/", "failed test run", "before you rerun", "Save the full output"),
     ),
     _Standing(
-        "You may write the change yourself when it changes one file outside tests, the added and removed lines "
-        "outside tests are about 40 or fewer across the whole item, and the contract does not call its guarantee "
-        "safety, privacy, or integrity. Count those lines from `git diff --numstat <base>...HEAD`, quote that "
-        "output in the report, and treat every round and commit as one diff. Past that size, or more than one file "
-        "outside tests, the code delegate writes the change. The claims check and the gate review are never skipped.",
-        ("write the change yourself", "one file", "claims check"),
-    ),
-    _Standing(
         "Make every scratch directory, archive copy, and saved output with `mktemp -d -p <scratch>`, never "
         "directly under `/tmp`. Delete that directory when you are done. A test suite's own temporary files stay "
         "where the tests put them. Do not set TMPDIR.",
@@ -79,6 +60,7 @@ _RULES = (
     ),
 )
 STANDING_PLACEHOLDER = re.compile(r"<([a-z]+)>")
+HOUSE_RULE_TAG = re.compile(r"\[(worker|reviewer|coordinator)\](?: )?")
 ESCALATED = "escalated: "
 MODE_RESOLUTIONS = 3
 SEAT_RULE = ("Seat rule. Copy the Mode value above into --brief-mode on every roles.py mode and roles.py show call you make, "
@@ -193,7 +175,13 @@ def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, b
             restaurant.fence()
             dish, used_paths, _, thread = brief_dish(restaurant, ident, paths, lease, acceptance)
             inputs = mode_inputs(restaurant, dish, used_paths, thread)
+            meta = restaurant.meta
         mode = seam.roles_mode(inputs)
+        picked_layout = affected_layout(meta)
+        if not (verify or "").strip():
+            picked = affected_verify_text(inputs.project_root, used_paths, seam.LAND, meta)
+        else:
+            picked = verify
         with restaurant.checked():
             restaurant.fence()
             dish, used_paths, used_lease, thread = brief_dish(restaurant, ident, paths, lease, acceptance)
@@ -201,36 +189,41 @@ def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, b
                 continue
             if inputs.escalated is None and mode.escalation:
                 record_escalation(restaurant, ident, mode.escalation)
-            return write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, used_paths, used_lease, base,
-                               context, thread)
+            return write_brief(restaurant, dish, mode, goal, acceptance, contract, picked, used_paths, used_lease, base,
+                               context, thread, picked_layout)
     raise BrigadeError(f"{ident} changed while resolving its mode; run brief again")
 
 
-def verify_rule(land):
-    return (
-        "While working, run only the affected test modules. "
-        f"Run all builds and tests through `python3 {land} slot -- <command>`. "
-        f"When the brief asks for the whole suite, run it as `python3 {land} slot --slots 2 -- python3 scripts/run_tests.py -j 8`. "
-        "When that command is the outermost slot, a governor with fewer than two worker slots refuses it and the suite does not run. "
-        "An affected-module run stays one slot. "
-        "When this section has an exclusive slot rule for measurements, that rule takes precedence for measurements. "
-        "Run the claims check before the final verification. "
-        "Run the full verification chain once, after the last commit. "
-        "The chain is the first bullet of this section. "
-        "A later commit that changes only prose does not rerun it. "
-        "Run the claims check again after any later edit to prose. "
-        "Prose is a change note, a comment, a docstring, help text, or a report sentence the check covered. "
-        "The final run of the chain also includes `python3 -m unittest tests.test_pstack_t3`, because that module checks the change note. "
-        "A prose-only commit runs that module and does not rerun the chain. "
-        "A fix round runs the affected modules while working and one full run at the end."
-    )
+def verify_rule(land, picked_layout):
+    lines = []
+    if picked_layout is not None:
+        lines.append("While working, run only the affected test modules. ")
+    lines.append(f"Run all builds and tests through `python3 {land} slot -- <command>`. ")
+    if picked_layout is not None:
+        lines.append(f"When the brief asks for the whole suite, run it as `python3 {land} slot --slots 2 -- {picked_layout.suite}`. ")
+        lines.append("When that command is the outermost slot, a governor with fewer than two worker slots refuses it and the suite does not run. ")
+        lines.append("An affected-module run stays one slot. ")
+    lines.extend([
+        "When this section has an exclusive slot rule for measurements, that rule takes precedence for measurements. ",
+        "Run the claims check before the final verification. ",
+        "Run the full verification chain once, after the last commit. ",
+        "The chain is the first bullet of this section. ",
+        "A later commit that changes only prose does not rerun it. ",
+        "Run the claims check again after any later edit to prose. ",
+        "Prose is a change note, a comment, a docstring, help text, or a report sentence the check covered. ",
+    ])
+    if picked_layout is not None:
+        lines.append(f"The final run of the chain also includes `python3 -m unittest {picked_layout.always}`. ")
+        lines.append("A prose-only commit runs that module and does not rerun the chain. ")
+        lines.append("A fix round runs the affected modules while working and one full run at the end.")
+    return "".join(lines)
 
 
 def _fill_standing(text, values):
     return STANDING_PLACEHOLDER.sub(lambda match: values[match.group(1)], text)
 
 
-def standing_rules(restaurant, base, context, verify):
+def standing_rules(restaurant, context, verify):
     """The STANDING RULES bullets, in _RULES order.
 
     A rule whose placeholder has no value is skipped. A rule is dropped when the coordinator's context and
@@ -241,7 +234,7 @@ def standing_rules(restaurant, base, context, verify):
     except BrigadeError:
         raw = restaurant.meta.get(SCRATCH_KEY)
         raise BrigadeError(f"restaurant.json {SCRATCH_KEY} {raw!r} is invalid: {SCRATCH_REFUSAL}") from None
-    values = {"reports": str(restaurant.dir / "reports"), "base": base, "scratch": scratch}
+    values = {"reports": str(restaurant.dir / "reports"), "scratch": scratch}
     seen = same_text(" ".join(context) + " " + verify)
     lines = []
     for rule in _RULES:
@@ -269,7 +262,34 @@ def standing_rules(restaurant, base, context, verify):
     return lines
 
 
-def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, paths, lease, base, context, thread):
+def worker_house_rules(text):
+    """The house rules a worker brief carries.
+
+    A rule is a line that starts at column 0 and the indented or blank lines under it. A rule whose
+    first line's first role tag is `[reviewer]` or `[coordinator]` is left out. One whose first tag is
+    `[worker]` keeps its place and loses that tag and the one space after it. Every other rule is kept
+    as it is, so a store with no tags renders the text it held before.
+    """
+    rules, current = [], []
+    for line in text.strip().split("\n"):
+        if line[:1] not in ("", " ", "\t") and current:
+            rules.append(current)
+            current = []
+        current.append(line)
+    rules.append(current)
+    kept = []
+    for lines in rules:
+        tag = HOUSE_RULE_TAG.search(lines[0])
+        if tag and tag.group(1) != "worker":
+            continue
+        if tag:
+            lines[0] = HOUSE_RULE_TAG.sub("", lines[0], count=1)
+        kept.append("\n".join(lines))
+    return "\n".join(kept)
+
+
+def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, paths, lease, base, context, thread,
+                picked_layout):
     ident = dish["id"]
     if not dish["branch"]:
         dish = restaurant.update("dishes.tsv", ident, "dish", branch=f"{slug(restaurant.meta['restaurant'])}/{ident.lower()}")
@@ -278,7 +298,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
     report = restaurant.dir / "reports" / f"{ident}.md"
     sent_back = [row for row in item_verdicts(restaurant.rows("pass.tsv"), ident) if VERDICTS.get(row["verdict"]) == "sent-back"]
     findings = restaurant.dir / "reports" / (sent_back[-1]["report"] if sent_back and sent_back[-1]["report"] else f"{ident}-review.md")
-    standing = standing_rules(restaurant, base, context, verify)
+    standing = standing_rules(restaurant, context, verify)
     lines = [
         f"Use the poteto-mode skill and its `{dish['station']}` playbook.", *mode.lines, "Gate: brigade", SEAT_RULE, "",
         f"GOAL: {goal}",
@@ -293,7 +313,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         "", "ACCEPTANCE:", *[f"- {item}" for item in acceptance],
         "", "CONTRACT:", contract,
         "", "VERIFY:", f"- {verify}",
-        f"- {verify_rule(land)}",
+        f"- {verify_rule(land, picked_layout)}",
         *([f"- Run every measurement through `python3 {land} slot --exclusive -- <command>`, so no other work shares the machine while it runs."]
           if dish["station"] in MEASURING_STATIONS else []),
         *(["", "STANDING RULES:", *standing] if standing else []),
@@ -303,13 +323,13 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         f"- Write it to {report}: status, branch, head SHA, what you ran and its output, before and after numbers with the method, deviations, follow-ups. "
         "List each follow-up as one top-level list item under a `## Follow-ups` heading, or write `None.` there. "
         "Name each file a follow-up touches by its repository path in backticks.",
-        "- Hold a `## Threads` section with one list item per child of the form - <role> `<thread id>` <seat>. The role is one of code delegate, claims check, and architect runner, named literally. The seat is one bare provider/model token with nothing after it and no backticks around it. That means no reasoning level, no note, and no effort word after the seat. List only T3 threads started with `delegate_task` or `t3_thread_launch` for the code delegate, claims check, and architect runner threads it used. For example, the line - code delegate `mcp:00000000-0000-4000-8000-000000000001` opencode-go/step-5-preview-free parses as one child with no unreadable line. Name a child run inside the worker's own harness in the report body instead, never in the section. Name any other child, such as a how explainer, in the report body instead, never in the section. A missing section adds no row and is not an error. The worker still writes the section when it used a child.",
+        "- Hold a `## Threads` section with one list item per child of the form - <role> `<thread id>` <seat>. The role is one of code delegate, claims check, and architect runner, named literally. The seat is one bare provider/model token with nothing after it and no backticks around it. That means no reasoning level, no note, and no effort word after the seat. List only code delegate, claims check, and architect runner under ## Threads. Put every other child under ## Notes. List only T3 threads started with `delegate_task` or `t3_thread_launch` for those threads. For example, the line - code delegate `mcp:00000000-0000-4000-8000-000000000001` opencode-go/step-5-preview-free parses as one child with no unreadable line. Name a child run inside the worker's own harness in the report body instead, never in the section. A missing section adds no row and is not an error. The worker still writes the section when it used a child.",
         "- Under the status line, repeat this brief's Mode: line, and its Waived by mode: line when it has one. A step that line names is not a deviation.",
         *(["- If you find the design contested, do not run interrogate. Stop at a verifiable point, commit, and write Contested: <one-line reason> under the status line. The coordinator moves the work to full mode and gives your report to a fresh worker."]
           if mode.mode == "light" else []),
         f"- After that file is written, call t3_thread_send to thread {thread} with mode \"auto\" and the one-line message \"{ident} done: report at {report}\".",
         "- Then end your turn with one line naming the report path.",
-        "", "STANDING ORDERS:", (restaurant.dir / "house-rules.md").read_text().strip() + "\n\n" + "\n".join(TEST_STANDARD),
+        "", "STANDING ORDERS:", worker_house_rules((restaurant.dir / "house-rules.md").read_text()),
     ]
     text = "\n".join(lines) + "\n"
     restaurant.write(contract_file(ident), contract + "\n")

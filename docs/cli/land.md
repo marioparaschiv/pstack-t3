@@ -16,12 +16,12 @@ Land many agents' work on one repository through one queue.
 | --- | --- | --- | --- | --- |
 | `--repo REPO` |  |  | `.` | any checkout of the repository (default: current directory) |
 
-`<command>` is one of `init`, `cap`, `mode`, `times`, `owner`, `lease`, `submit`, `share`, `contest`, `land`, `resume`, `status`, `slot`.
+`<command>` is one of `init`, `cap`, `mode`, `times`, `owner`, `lease`, `submit`, `share`, `contest`, `land`, `resume`, `status`, `size`, `slot`.
 
 ## land.py init
 
 ```text
-land.py [flags] init --trunk TRUNK --mode MODE [--remote REMOTE] [--base BASE] [--check CHECK] [--setup SETUP] [--batch BATCH] [--timeout TIMEOUT] [--merge-method MERGE_METHOD] [--cap CAP]
+land.py [flags] init --trunk TRUNK --mode MODE [--remote REMOTE] [--base BASE] [--check CHECK] [--setup SETUP] [--batch BATCH] [--timeout TIMEOUT] [--merge-method MERGE_METHOD] [--author-policy AUTHOR_POLICY] [--pr-item-line PR_ITEM_LINE] [--heartbeat-ms HEARTBEAT_MS] [--merge-heartbeat-ms MERGE_HEARTBEAT_MS] [--cap CAP] [--generated PATHS] [--generated-map MAP] [--rebuild COMMAND] [--max-file-tokens MAX_FILE_TOKENS] [--size-baseline PATH]
 ```
 
 write the repository's landing contract
@@ -32,12 +32,21 @@ write the repository's landing contract
 | `--mode MODE` | yes | `human`, `merge`, `push`, `local`, `auto` |  | human: PRs you merge; merge: PRs the queue merges; push: no PRs, the queue pushes trunk; local: a lane ref |
 | `--remote REMOTE` |  |  | `origin` |  |
 | `--base BASE` |  |  |  | local mode: the commit the lane starts from |
-| `--check CHECK` (repeatable) |  |  |  | command that must pass before landing; repeatable |
-| `--setup SETUP` |  |  |  | command run before checks in the clean integration worktree, such as npm ci |
-| `--batch BATCH` |  |  | `1` | entries checked together; a failed batch lands one at a time |
-| `--timeout TIMEOUT` |  |  | `1800` | seconds before a check is killed |
-| `--merge-method MERGE_METHOD` |  | `merge`, `squash`, `rebase` |  | merge mode: how the queue merges its PRs, checked against the repository whenever it is set. omitted in merge mode, init stores the one allowed method, or merge when gh cannot say |
+| `--check CHECK` (repeatable) |  |  |  | command that must pass before landing; repeatable. Omitted, a rerun keeps the stored checks and a first init stores none |
+| `--setup SETUP` |  |  |  | command run before checks in the clean integration worktree, such as npm ci. Omitted, a rerun keeps the stored setup and a first init stores none |
+| `--batch BATCH` |  |  |  | entries checked together; a failed batch lands one at a time. Omitted, a rerun keeps the stored batch and a first init stores 1 |
+| `--timeout TIMEOUT` |  |  |  | seconds before a check is killed. Omitted, a rerun keeps the stored timeout and a first init stores 1800 |
+| `--merge-method MERGE_METHOD` |  | `merge`, `squash`, `rebase` |  | merge mode: how the queue merges its PRs, checked against the repository when gh can report the allowed methods, whenever it is set. omitted in merge mode, a first init stores the only allowed method, or prefers merge then squash when several are allowed, or merge when gh cannot say, and a rerun keeps the stored method while the repository allows it |
+| `--author-policy AUTHOR_POLICY` |  | `any`, `configured`, `credited` |  | how the queue judges a reviewed commit's author. any skips the check. configured and credited check only when the repository has a configured identity: configured requires that author, and credited also lands an entry whose commits by another author each carry a Co-authored-by trailer equal to that commit's author as name \<email> and whose body has a line that reads Based on #\<n> by @\<login>, optionally with a trailing period. Omitted, a rerun keeps the stored policy or stores any when the contract has none, and a first init stores any. An unknown --author-policy value is refused before the contract changes |
+| `--pr-item-line PR_ITEM_LINE` |  | `on`, `off` |  | whether the queue appends the Kind and Goal line to the PR body. on adds the line when the item has one, after one blank line when the body has text or as the whole body otherwise. off sends the submitted title and body unchanged. Omitted, a rerun keeps the stored setting and a first init stores off. An unknown value is refused before the contract changes |
+| `--heartbeat-ms HEARTBEAT_MS` |  |  |  | fallback schedule interval in milliseconds. Omitted, a rerun keeps the stored value and a first init stores 3600000. A value below 3600000 is refused before the contract changes |
+| `--merge-heartbeat-ms MERGE_HEARTBEAT_MS` |  |  |  | merge wait schedule interval in milliseconds. Omitted, a rerun keeps the stored value and a first init stores 900000. A value below 900000 is refused before the contract changes |
 | `--cap CAP` |  |  |  | most changes in flight on the repository at once; 0 clears it |
+| `--generated PATHS` |  |  |  | comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. An empty value clears the stored list. Omitted, a rerun keeps the stored list and a first init stores none |
+| `--generated-map MAP` |  |  |  | comma-separated src equals dst rules the fire expansion uses, with a trailing ! for index pages and a trailing ^ to skip doc items, such as src=dst!^ for a catalog page. An empty value clears the stored map. Omitted, a rerun keeps the stored map and a first init stores none |
+| `--rebuild COMMAND` |  |  |  | command that regenerates the generated paths while landing, such as "python3 scripts/build.py". An empty value clears the stored command. Omitted, a rerun keeps the stored command and a first init stores none |
+| `--max-file-tokens MAX_FILE_TOKENS` |  |  |  | token maximum using bytes // 4. Omitted keeps the stored limit; a first init stores none |
+| `--size-baseline PATH` |  |  |  | repository-relative baseline path. Omitted keeps the stored path; the fallback is size-baseline.json |
 
 ## land.py cap
 
@@ -97,9 +106,9 @@ raise a holder prefix's generation floor; it never lowers
 land.py [flags] lease <action>
 ```
 
-claim, renew, release, or list path leases
+claim, renew, widen, release, or list path leases
 
-`<action>` is one of `claim`, `renew`, `release`, `list`, `check`, `reserve`, `unreserve`.
+`<action>` is one of `claim`, `renew`, `widen`, `release`, `list`, `check`, `reserve`, `unreserve`.
 
 ## land.py lease claim
 
@@ -125,6 +134,21 @@ land.py [flags] lease renew [--ttl-hours TTL_HOURS] [--if-live] [--owner OWNER] 
 | `id` | yes |  |  |  |
 | `--ttl-hours TTL_HOURS` |  |  | `6` |  |
 | `--if-live` |  |  |  | refuse when the lease has expired instead of admitting it again |
+| `--owner OWNER` |  |  |  | \<holder prefix>@\<generation> of the coordinator writing; refused below that prefix's floor |
+
+## land.py lease widen
+
+```text
+land.py [flags] lease widen --paths PATHS [--ttl-hours TTL_HOURS] [--owner OWNER] id
+```
+
+add paths to a live lease in place; its id and holder stay, and an expired lease is admitted again
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `id` | yes |  |  |  |
+| `--paths PATHS` | yes |  |  | comma-separated files or directories to add |
+| `--ttl-hours TTL_HOURS` |  |  | `6` |  |
 | `--owner OWNER` |  |  |  | \<holder prefix>@\<generation> of the coordinator writing; refused below that prefix's floor |
 
 ## land.py lease release
@@ -257,7 +281,7 @@ clear a pause after you did what its reason says
 ## land.py status
 
 ```text
-land.py [flags] status [--holder HOLDER] [--sha SHA] [id]
+land.py [flags] status [--holder HOLDER] [--sha SHA] [--json] [id]
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -265,6 +289,24 @@ land.py [flags] status [--holder HOLDER] [--sha SHA] [id]
 | `id` |  |  |  |  |
 | `--holder HOLDER` |  |  |  | list this holder's entries; a value ending in / matches every holder under it |
 | `--sha SHA` |  |  |  | with --holder, only entries at exactly this commit |
+| `--json` |  |  |  | print one JSON object. It holds mode, trunk, generated, rebuild, map, plus size keys only while the contract sets a limit |
+
+## land.py size
+
+```text
+land.py [flags] size [--staged] [--all] [--shrink] [--baseline PATH]
+```
+
+check changed worktree file sizes; --staged reads changed index files; --all reads tracked and unignored untracked files. Seed a missing baseline, except with --shrink, which refuses.
+
+In a pstack-t3 checkout with no hook, run `h=$(git rev-parse --git-path hooks/pre-commit) && test ! -e "$h" && printf '#!/bin/sh\nexec python3 skills/landing/scripts/land.py size --staged\n' > "$h" && chmod +x "$h"`.
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--staged` |  |  |  | judge staged files from the index instead of the worktree |
+| `--all` |  |  |  | judge tracked and unignored untracked files |
+| `--shrink` |  |  |  | lower stored allowances that fell, never raising any, before judging |
+| `--baseline PATH` |  |  |  | baseline file to read and write instead of the contract one |
 
 ## land.py slot
 
@@ -278,7 +320,7 @@ run a heavy command under a governor slot
 | --- | --- | --- | --- | --- |
 | `--exclusive` |  |  |  | hold every slot: for benchmarks that need a quiet machine |
 | `--slots N` |  |  |  | take N worker slots in one admission. The default is 1. A value above the governor's worker slots is refused |
-| `--for SECONDS` |  |  |  | cap this exclusive hold at SECONDS. The default is 600. The maximum is 7200. A value over the default needs --reason |
+| `--for SECONDS` |  |  |  | cap this exclusive hold at SECONDS. The default is 600. The maximum is the governor exclusiveMax, 7200 by default. A value over the default needs --reason |
 | `--reason TEXT` |  |  |  | why this exclusive hold may pass the default cap. Waiters see it |
 | `--repo REPO` |  |  |  | the repository to name in the holder record (default: current directory) |
 | `cmd` |  |  |  |  |

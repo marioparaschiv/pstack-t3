@@ -4,7 +4,7 @@ Read-only review. Change no tracked file in the repository. Run no git commit, p
 
 Scratch copies. Never change the repository's git configuration, in any checkout or worktree: no `git config`, no `core.worktree`, no `--work-tree` against the shared git directory, no `git init` inside it. To get a scratch copy of a commit, use `git archive <sha> | tar -x -C <tmp dir>` (no git metadata), or `git worktree add --detach <tmp dir> <sha>` followed by `git worktree remove --force <tmp dir>` when you finish. Before you write the report, run `git -C <the reviewed worktree> status --short` and it must run without error.
 
-What counts as a blocker. Judge only what this diff adds or changes; a flaw in a line the diff did not touch is a note. A statement in skill text, docs, help text, a printed message, a docstring, a comment, or a test name that is false or broader than the code. A behavior that breaks the brief's acceptance or the repository's rules in AGENTS.md. A bullet under changes/ only when it states something false; a true bullet that omits a condition is a note. Style preferences are notes.
+What counts as a blocker. Judge only what this diff adds or changes; a flaw in a line the diff did not touch is a note. A statement in skill text, docs, help text, a printed message, a docstring, a comment, or a test name that is false or broader than the code. A behavior that breaks the brief's acceptance or the repository's rules in AGENTS.md. A change-note bullet only when it states something false; a true bullet that omits a condition is a note. Style preferences are notes.
 
 Concurrent changes. A failure that needs another program to change the filesystem or a database between two adjacent system calls of the tool is a note, not a blocker, unless this diff makes the tool's outcome in that case worse than it was at the base, or the brief names that case as in scope. Say which of those applies when you raise one.
 
@@ -21,3 +21,13 @@ The first line of the report is exactly one of these.
 After the verdict line: blockers, then edits when there are any, then non-blocking notes, then the commands you ran with their results.
 
 Scratch space. When the review brief names a parent directory, make every scratch directory and archive copy with `mktemp -d -p <that parent>`. Never create them directly under `/tmp`, which is memory-backed and small on many systems. When the brief names no parent, say so in the report and do not use a memory-backed temporary directory. Delete your scratch directory when you finish. Do not set TMPDIR. A file name you report carries no home directory, user name, host name, or thread id of the machine that ran the review.
+
+## Rounds after the first
+
+Round one is unchanged. It reads the whole change against its base.
+
+In round two and later, review `git diff <previous reviewed SHA>...<head>` and check each blocker the previous round named. The brief names that SHA and gives you the previous round's review file.
+
+A new blocker must be in that fix diff or caused by it. Give a concrete reproduction you ran against the reviewed head.
+
+Worth a round tests a finding this diff adds or changes. A defect that was present at the previous reviewed head and that the fix neither touches nor makes worse is outside this diff. It is a non-blocking note with one ticket line the coordinator can file, never a blocker.

@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `contract`, `watch`, `startable`, `hang`, `model`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `launch`, `spend`.
+`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `affected`, `onboard`, `contract`, `watch`, `startable`, `hang`, `model`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `launch`, `spend`.
 
 ## brigade.py open
 
@@ -37,13 +37,13 @@ create a restaurant, or print an existing one
 | `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns, such as github |
 | `--workers WORKERS` |  |  |  | how many dishes may be in progress or in review; missing reads as 2 |
 | `--mode MODE` |  | `full`, `light` |  | this restaurant's light or full mode; missing leaves it to the roles files |
-| `--context-cap CONTEXT_CAP` |  |  |  | on creation, set the context cap; missing uses 300000; an existing store syncs its saved cap |
+| `--context-cap CONTEXT_CAP` |  |  |  | on creation, set the context cap; missing uses 300000, except claude adopts an existing integer autoCompactWindow from the project's .claude/settings.local.json; claude attempts to write the cap there unless adopting it; an existing store is left alone |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | on creation, choose claude or other; missing uses claude; an existing store uses its saved provider |
 
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--liveness-ms N] [--change-note-dir DIR] [--affected-tests JSON] [--shared-docs JSON] [--doc-timebox N] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
 ```
 
 record the head chef thread, a schedule id, or the reporting level
@@ -66,6 +66,13 @@ record the head chef thread, a schedule id, or the reporting level
 | `--cap KIND=N` |  |  |  | comma-separated kind=number pairs, at most that many items of the kind holding a worker slot; a pair with no number clears that kind's cap; an empty value clears every cap |
 | `--review KIND=MODE` |  |  |  | comma-separated kind=mode pairs, the default mode for a new item of that kind, full or light; a pair with no mode clears that kind's depth; an empty value clears every depth |
 | `--scratch-dir DIR` |  |  |  | the parent directory worker briefs pass to mktemp -d -p; an absolute directory path outside /tmp; "" clears the setting |
+| `--low-reserve N` |  |  |  | the most workers still idle when a low ticket is held back while an urgent or normal ticket can start; 0 holds no low ticket back; "" clears it to 1 |
+| `--round-budget N` |  |  |  | the send-backs that owe a round decision. Higher waits for more send-backs. "" clears it to 3 |
+| `--liveness-ms N` |  |  |  | the interval a new liveness schedule uses, a whole number of at least 60000; "" removes the setting |
+| `--change-note-dir DIR` |  |  |  | the repository-relative directory holding one change-note fragment per branch, such as changes; "" clears it, and an unset key leases no fragment |
+| `--affected-tests JSON` |  |  |  | JSON object or JSON file for the affectedTests layout; "" clears it; - reads stdin |
+| `--shared-docs JSON` |  |  |  | JSON list or JSON file for the sharedDocs catalog; "" clears it; - reads stdin |
+| `--doc-timebox N` |  |  |  | the shared-document timebox in minutes, a whole number of 1 or more; "" clears it to 90 |
 | `--context-cap CONTEXT_CAP` |  |  |  | the auto-compact window written to .claude/settings.local.json; "" clears it to 300000 |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | claude or other; "" clears it to claude; other writes no settings file |
 
@@ -236,7 +243,7 @@ group tickets into one dish and assign it to a station
 | `--thread THREAD` |  |  |  |  |
 | `--branch BRANCH` |  |  |  |  |
 | `--timebox TIMEBOX` |  |  | `60` | minutes before the liveness check flags the dish |
-| `--paths PATHS` |  |  |  | paths the dish will change. Fire claims a landing lease on them, plus the generated copies and doc pages the build layout makes from them when the project has one; given once |
+| `--paths PATHS` |  |  |  | paths the dish will change. Fire claims a landing lease on them, plus the generated copies and doc pages the contract map makes from them when the contract lists generated paths and a map; given once |
 | `--mode MODE` |  |  |  | full, to start the dish in full mode; needs --reason |
 | `--reason REASON` |  |  |  | one line: why the dish runs in full mode |
 | `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | the item's kind when the lead ticket has none or --tickets names no ticket; a lead ticket with no kind records it too; refused when the lead ticket has another kind; with no --kind and no kind from the lead ticket, station bug-fix or perf-issue gives fix, station investigation gives study, and fire is refused on any other station |
@@ -249,7 +256,7 @@ group tickets into one dish and assign it to a station
 brigade.py [flags] brief [--fields FIELDS] [--goal GOAL] [--acceptance ACCEPTANCE] [--contract CONTRACT] [--verify VERIFY] [--paths PATHS] [--lease LEASE] [--base BASE] [--context CONTEXT] id
 ```
 
-render the worker brief for a dish; refuses when a field or the coordinator thread is missing
+Render the worker brief for a dish. Refuses when a field or the coordinator thread is missing. House rules use the case-sensitive tags [worker], [reviewer], and [coordinator]. The first tag anywhere on a rule's first line selects its role. After outer whitespace is stripped, each non-empty line starting without a space or tab begins a rule. Following blank lines and lines starting with a space or tab continue that rule, even after a blank line. A brief keeps untagged and [worker] rules. It removes the [worker] tag and at most one following space. It leaves out [reviewer] and [coordinator] rules with their continuation lines.
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
@@ -263,6 +270,37 @@ render the worker brief for a dish; refuses when a field or the coordinator thre
 | `--lease LEASE` |  |  |  | the landing lease id, when fire did not claim it; given once |
 | `--base BASE` |  |  |  | the trunk ref the worker's branch starts from, such as origin/main |
 | `--context CONTEXT` (repeatable) |  |  |  | a pointer to files, PRs, or upstream reports; repeatable |
+
+## brigade.py affected
+
+```text
+brigade.py [flags] affected [--root ROOT] [--paths PATHS] [--diff DIFF]
+```
+
+print the verify paragraph for the changed paths
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--root ROOT` |  |  |  | project root to scan |
+| `--paths PATHS` (repeatable) |  |  |  | repo path the dish will change; repeatable |
+| `--diff DIFF` |  |  |  | git diff range to name changed files, such as origin/main...HEAD |
+
+## brigade.py onboard
+
+```text
+brigade.py [flags] onboard --project-root PROJECT_ROOT [--name NAME] [--admin] [--at AT] [--detect] [--summary]
+```
+
+detect onboarding settings
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--project-root PROJECT_ROOT` | yes |  |  |  |
+| `--name NAME` |  |  |  |  |
+| `--admin` |  |  |  |  |
+| `--at AT` |  |  | `==SUPPRESS==` |  |
+| `--detect` |  |  |  | print facts and missing as JSON and write no brigade files |
+| `--summary` |  |  |  | write onboarding.txt and print the change lines, or with identical bytes print no change to onboarding.txt and skip the write, or with different bytes but unchanged parsed facts print normalized onboarding.txt with no fact changes and rewrite the file, or with no restaurant file print the lines plus not saved and write nothing |
 
 ## brigade.py contract
 
@@ -290,7 +328,7 @@ liveness: which dishes have reports, are running, or are over their timebox
 brigade.py [flags] startable
 ```
 
-waiting tickets in the order they should start, each with why it can or cannot start now; a low ticket that would take the last idle worker is held back while any urgent or normal ticket is waiting, whether or not that ticket can start now; it starts nothing
+waiting tickets in the order they should start, each with why it can or cannot start now; a low ticket that could otherwise start and does not ride a higher ticket's paths is held back while an urgent or normal ticket can start now and the workers still idle are at least one and at most lowReserve, the restaurant.json setting that reads as 1 when absent and holds no low ticket back at 0; it starts nothing
 
 ## brigade.py hang
 
@@ -360,7 +398,7 @@ record one thread an item used, for a role no other command writes
 ## brigade.py dish
 
 ```text
-brigade.py [flags] dish [--state STATE] [--task TASK] [--thread THREAD] [--branch BRANCH] [--pr PR] [--sha SHA] [--timebox TIMEBOX] [--reported] [--worker-ended WORKER_ENDED] [--lease LEASE] [--paths PATHS] [--stopped STOPPED] [--mode MODE] [--reason REASON] id
+brigade.py [flags] dish [--state STATE] [--task TASK] [--thread THREAD] [--branch BRANCH] [--pr PR] [--sha SHA] [--timebox TIMEBOX] [--reported] [--worker-ended WORKER_ENDED] [--lease LEASE] [--paths PATHS] [--add-paths ADD_PATHS] [--stopped STOPPED] [--mode MODE] [--reason REASON] id
 ```
 
 update a dish
@@ -379,6 +417,7 @@ update a dish
 | `--worker-ended WORKER_ENDED` |  |  |  | record that this attempt's worker ended or failed and wrote no report |
 | `--lease LEASE` |  |  |  | record a lease id claimed again; given once |
 | `--paths PATHS` |  |  |  | record the paths that lease covers; given once |
+| `--add-paths ADD_PATHS` |  |  |  | widen the lease to cover these comma-separated paths; given once |
 | `--stopped STOPPED` |  |  |  | with --state dropped: the run id t3_thread_wait reported terminal, or idle |
 | `--mode MODE` |  |  |  | full, to move open work to full mode once; needs --reason |
 | `--reason REASON` |  |  |  | one line: why the dish moves to full mode |
@@ -391,21 +430,21 @@ brigade.py [flags] pass <action>
 
 record or check a review verdict for a dish at a head SHA
 
-`<action>` is one of `record`, `check`.
+`<action>` is one of `record`, `check`, `stats`.
 
 ## brigade.py pass record
 
 ```text
-brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AUTHOR --verifier VERIFIER [--note NOTE] [--same-family] [--report REPORT] [--edits EDITS] [--reviewer-thread REVIEWER_THREAD] [--member | --late] dish
+brigade.py [flags] pass record [--pr PR] --sha SHA --verdict VERDICT --author AUTHOR --verifier VERIFIER [--note NOTE] [--same-family] [--report REPORT] [--edits EDITS] [--reviewer-thread REVIEWER_THREAD] [--reason REASON] [--member | --late] dish
 ```
 
 Records the verdict, and writes one row of threads.tsv for the reviewer and for each child the worker's report lists. The reviewer's row comes from --reviewer-thread and takes its seat from --verifier. The child rows come from a ## Threads section of reports/\<dish>.md, which this command reads and takes no flag for.
 
-That section starts with the heading `## Threads` on a line of its own, and every other line of it that is not blank, is not a heading, and is not inside a fenced block that opens after up to three spaces is one list item of the form - \<role> `\<thread id>` \<seat>.
+That section starts with the heading `## Threads` on a line of its own. A line of it that opens a fence after up to three spaces is not read, and neither is a line until that fence closes. Every other non-blank line of it is skipped when it is plain prose, that is when it starts, after any leading whitespace, with neither a list marker nor a `#`, holds no backticked thread id, and names no lowercase child role. A list marker is a hyphen, an asterisk, a plus, a bullet, or a number followed by a dot or a closing parenthesis.
 
 This example uses made-up ids. A report whose worker used two children holds the heading `## Threads` and then two items, one for a code delegate whose thread id is `mcp:00000000-0000-4000-8000-000000000001` and whose seat is `opencode-go/step-5-preview-free`, and one for a claims check whose thread id is `mcp:00000000-0000-4000-8000-000000000002` and whose seat is `codex/gpt-6.1-sol`.
 
-The three roles a child may take are code delegate, claims check, and architect runner. A child whose role is any of the other four is refused, because dish --thread writes the worker rows, --reviewer-thread writes the reviewer row, and the thread command writes the panel member row. A report with no ## Threads section adds no row and is not an error. A line that is not one such item is refused by its number. An item whose thread id the table would change is refused by its number too. So is a heading deeper than the section's own, and so is a second ## Threads heading while the first is still open, and those two end the scan. A role that is well formed but is not one of the three is refused by its number and named.
+The three roles a child may take are code delegate, claims check, and architect runner. A child whose role is any of the other four is refused, because dish --thread writes the worker rows, --reviewer-thread writes the reviewer row, and the thread command writes the panel member row. A report with no ## Threads section adds no row and is not an error. A non-blank line that is read, is not prose and is not of that form is refused by its number. An item whose thread id the table would change is refused by its number too. So is a heading deeper than the section's own, and so is a second ## Threads heading while the first is still open, and those two end the scan. A role that is well formed but is not one of the three is refused by its number and named.
 
 Any refusal happens before the pass row is written, so nothing is recorded and no partial row is written.
 
@@ -422,6 +461,7 @@ Any refusal happens before the pass row is written, so nothing is recorded and n
 | `--report REPORT` |  |  |  | the round's findings file under reports/, such as D2-review-1.md |
 | `--edits EDITS` |  |  |  | the round's review report under reports/, such as D2-review-1.md; --verdict pass-with-edits needs it, and no other verdict takes it; refused with one line that says why when its edits cannot be read |
 | `--reviewer-thread REVIEWER_THREAD` |  |  |  | the reviewer's thread id; writes the reviewer row of threads.tsv for this attempt |
+| `--reason REASON` |  | `false-wording`, `missing-test`, `wrong-behavior`, `out-of-lease`, `scope`, `other` |  | why the review sent the work back, one of false-wording, missing-test, wrong-behavior, out-of-lease, scope, other; --reason goes only with --verdict send-back |
 | `--member` |  |  |  | a panel member's row that does not carry the item's verdict; the dish is left as it is |
 | `--late` |  |  |  | a round found unrecorded after the dish moved on; the dish is left as it is |
 
@@ -438,6 +478,18 @@ brigade.py [flags] pass check --sha SHA [--json] dish
 | `dish` | yes |  |  |  |
 | `--sha SHA` | yes |  |  |  |
 | `--json` |  |  |  | print verdict, author, verifier, note, and crossFamily of the latest row |
+
+## brigade.py pass stats
+
+```text
+brigade.py [flags] pass stats [--last LAST]
+```
+
+Print the first-pass rate overall and per author model. An item has at least one non-member pass.tsv row. Its first non-member row in table order sets its author and first verdict. The rate is the percentage of items whose first verdict is pass. Every other verdict counts as a failure. Select the last N items by the at cell of their last non-member row, descending. Ties keep the order in which items first occur in the table. Count all non-member send-back rows of those items by reason. An empty reason or one outside false-wording, missing-test, wrong-behavior, out-of-lease, scope, other counts as unrecorded. An empty window prints no items with a verdict.
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--last LAST` |  |  | `20` | how many items to cover, counting back from the most recently reviewed; default 20 |
 
 ## brigade.py edits
 
@@ -485,7 +537,7 @@ brigade.py [flags] 86 add [--question QUESTION] [--options OPTIONS] [--default D
 | `--options OPTIONS` |  |  |  |  |
 | `--default DEFAULT` |  |  |  |  |
 | `--dish DISH` |  |  |  |  |
-| `--round-budget` |  |  |  | with --dish: write the decision a dish owes at 3 send-backs; takes no question, options, or default |
+| `--round-budget` |  |  |  | with --dish: write the decision a dish owes at its stored roundBudget send-backs; takes no question, options, or default |
 
 ## brigade.py 86 answer
 

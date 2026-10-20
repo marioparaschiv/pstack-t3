@@ -28,11 +28,10 @@ flowchart TD
 
 pstack never hard-codes a model. Each step names a role, and `roles.py` resolves that role against T3's live catalog.
 
-| Role kind | Default |
+| Role kind | Unset behavior |
 | --- | --- |
-| Single seat (`bug-fix`, `judgment and prose`, `swarm workers`, ...) | Unset single roles use Claude Opus (`claude-opus-5-5`) at xhigh for judgment and Grok (`grok-4.7`) at xhigh for code. `skill tests` prefers a model from another family for a fresh-child skill test. |
-| `arena runners`, `arena cross-judge pool`, `architect runners`, `interrogate reviewers` | Those two seats, Claude Opus then Grok |
-| `verifiers` | This thread's model plus one seat per other model family you can run. With one runnable model family, `verifiers` is three copies of one seat. That seat is this thread's model only when this thread's provider can run children. Otherwise that seat is the runnable provider's first model. |
+| Every role except `review backups` (`bug-fix`, `judgment and prose`, `swarm workers`, `skill tests`, `verifiers`, `arena runners`, `arena cross-judge pool`, `architect runners`, `interrogate reviewers`, ...) | `inherit`, so the child runs on this thread's model, unless the `exclude` list refuses that seat and the role takes the replacement model, is refused, or reports `catalog-required` without a catalog. |
+| `review backups` | `unset`. Set it to let `roles.py backup` seat a review panel when a verifier's backups are out. Unset, a verifier parks. |
 
 `$setup-pstack` writes your own choices to `~/.config/pstack-t3/roles.json`. A repository can override roles in `.pstack/t3-roles.json`. A reasoning budget (`small` to `unlimited`) sets each seat's effort. A seat whose model you cannot run falls back, and the report names each replacement.
 
@@ -50,7 +49,7 @@ Diversity is counted by model family, not by provider, because one provider can 
 | An executive admin (`$brigade-admin`, optional) | A pinned thread on the project root. It serves every coordinator on one repository. It routes your requests and owns shared intake. It settles conflicts between coordinators by published rules. You can overrule any ruling. `land.py` reservations, shares, and contests carry out its rulings. It never runs work. See [An executive admin](guide.md#an-executive-admin). |
 | The landing queue (`$landing`) | One queue per repository. `land.py land` is the only writer to trunk. See [Landing modes](guide.md#landing-modes). |
 
-The lead ends its turn while children work. T3 wakes it as each one finishes. A coordinator's worker calls `t3_thread_send` on the coordinator thread as its last step, after the report file is written. That report-back wakes the coordinator. The liveness check runs while work is in progress, every 10 minutes at `every-turn` and `milestones` and every 30 minutes at `digest`. `brigade.py watch` prints `report written, no report-back` while the work is in progress, when the report was written for this attempt, and when this attempt is not marked reported. The report counts as written for this attempt when its modification time is at or after the attempt's start. A report left by a replaced worker does not count. That line is a defect. The check reads the worker's activity, finds the cause, and fires a fix at that cause.
+The lead ends its turn while children work. T3 wakes it as each one finishes. A coordinator's worker calls `t3_thread_send` on the coordinator thread as its last step, after the report file is written. That report-back wakes the coordinator. The liveness check runs while work is in progress, every 10 minutes at `every-turn` and `milestones` and every 30 minutes at `digest` by default. `brigade.py set --liveness-ms` stores another interval. `brigade.py watch` prints `report written, no report-back` while the work is in progress, when the report was written for this attempt, and when this attempt is not marked reported. The report counts as written for this attempt when its modification time is at or after the attempt's start. A report left by a replaced worker does not count. That line is a defect. The check reads the worker's activity, finds the cause, and fires a fix at that cause.
 
 ## How a coordinator reports
 

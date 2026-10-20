@@ -13,7 +13,15 @@ Read [the pstack-t3 runtime](../pstack-runtime/SKILL.md) before spawning workers
 
 Build a page the user clicks. A server on this computer POSTs JSON to a webhook routine. The bot wakes with that JSON. Keep the sender key on the server. Do not put the sender key in the browser, in chat, or in this skill.
 
-The bot is a separate service. T3 runs this agent, but T3 has no webhook trigger and no way to create a routine in the bot's service. The user owns the routine. You build the UI, the local server, and the tailnet exposure.
+The bot is a separate service. T3 runs this agent and cannot create a routine in the bot's service. A T3 webhook trigger is a `schedule_task` run with a `{"type": "webhook"}` schedule, and it wakes a T3 thread, not this bot. The user owns the routine. You build the UI, the local server, and the tailnet exposure.
+
+## Choose the route
+
+Ask whether the bot should be a T3 thread. If yes, read [Webhook schedules](../pstack-runtime/webhooks.md) and offer the native route.
+
+- The user enters the signing key in the `request_secret` card. The one-use `secretRef` goes to `schedule_task`.
+- The local server still needs the same key on disk to sign each POST to `webhookUrl`. A `secretRef` is not exportable, so the key-file steps below apply.
+- If the user wants the external bot service, or the `schedule_task` result has no `webhookUrl`, follow the external route below unchanged.
 
 ## Get the webhook routine
 
@@ -34,7 +42,7 @@ For a Grok Bot or Cursor routine the URL looks like `https://api2.cursor.sh/auto
 
 ## Receive the sender key
 
-Do not accept the sender key in chat. T3 has no secret-request card, so the user writes the key to disk.
+Do not accept the sender key in chat. T3's `request_secret` tool asks the user for a secret in a private card. A saved result includes a one-use `secretRef`. Only a T3 tool such as `schedule_task` can consume that ref. The key itself never comes back to you, so the user writes it to disk.
 
 1. Create the UI's directory and an empty key file with mode 600, for example `<ui-dir>/.webhook-key`. Add it to the directory's `.gitignore`.
 2. Ask the user to write the key into that file from their own terminal or editor, for example `$EDITOR <ui-dir>/.webhook-key`, then reply "done". End the turn there.

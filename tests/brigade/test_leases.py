@@ -67,3 +67,118 @@ class LeasesTest(BrigadeTest):
         self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
         self.brigade("set", "--thread", "thread-2", "--replace")
         self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["thread"], "thread-2")
+
+    def write_meta(self, **changes):
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        meta.update(changes)
+        (self.at / "restaurant.json").write_text(json.dumps(meta))
+
+    def fired_polish(self):
+        self.open()
+        self.brigade("ticket", "add", "--kind", "polish", "--summary", "Tidy the guide")
+        return ("fire", "--tickets", "T1", "--station", "perf-issue", "--summary", "Tidy the guide")
+
+    def test_a_fire_refuses_a_stored_cap_that_does_not_parse_and_names_it(self):
+        fire = self.fired_polish()
+        for stored, shown in (("polish=1", "'polish=1'"), ({"polish": "1"}, "'1'")):
+            with self.subTest(stored=stored):
+                self.write_meta(caps=stored)
+                before = self.store_files()
+                error = self.brigade(*fire, ok=False)
+                self.assertIn(f"brigade: warning: restaurant.json caps {shown} is invalid:", error)
+                self.assertEqual(self.store_files(), before)
+
+    def test_a_fire_succeeds_when_caps_is_missing(self):
+        self.open()
+        self.brigade("ticket", "add", "--kind", "polish", "--summary", "Tidy the guide")
+        self.assertNotIn("caps", json.loads((self.at / "restaurant.json").read_text()))
+        self.assertTrue(self.brigade("fire", "--tickets", "T1", "--station", "perf-issue",
+                                     "--summary", "Tidy the guide").startswith("D1"))
+
+    def test_a_brief_refuses_a_stored_review_setting_that_does_not_parse_and_names_it(self):
+        self.briefable()
+        for stored, shown in (("light", "'light'"), ({"fix": "fullish"}, "'fullish'")):
+            with self.subTest(stored=stored):
+                self.write_meta(review=stored)
+                before = self.store_files()
+                error = self.brigade("brief", "D1", *self.FLAGS, "--contract", "none", ok=False)
+                self.assertIn(f"brigade: warning: restaurant.json review {shown} is invalid:", error)
+                self.assertEqual(self.store_files(), before)
+
+    def test_a_brief_succeeds_when_review_is_missing(self):
+        self.briefable()
+        self.assertNotIn("review", json.loads((self.at / "restaurant.json").read_text()))
+        self.assertTrue(self.brigade("brief", "D1", *self.FLAGS, "--contract", "none")
+                        .startswith("Use the poteto-mode skill"))
+
+    def test_set_repairs_a_stored_cap_that_does_not_parse(self):
+        self.open()
+        self.write_meta(caps={"polish": "1"})
+        self.brigade("set", "--cap", "polish=1")
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["caps"], {"polish": 1})
+
+    def test_change_note_dir_defaults_to_unset_and_fire_leases_no_fragment(self):
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.assertNotIn("changeNoteDir", json.loads((self.at / "restaurant.json").read_text()))
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
+                                      "--branch", "perf/d1", "--paths", "src"),
+                         "D1 (lease L1 held by perf/D1)")
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["paths"], "src")
+
+    def test_change_note_dir_set_leases_the_encoded_fragment(self):
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--change-note-dir", "changes")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
+        self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
+                                      "--branch", "docs/a", "--paths", "src/a.py"),
+                         "D1 (lease L1 held by perf/D1)")
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["paths"], "src/a.py,changes/docs%2Fa.md")
+        self.brigade("set", "--change-note-dir", "notes/sub/")
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["changeNoteDir"], "notes/sub")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "t")
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "t",
+                                      "--branch", "docs/a%b", "--paths", "src/b.py"),
+                         "D2 (lease L2 held by perf/D2)")
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D2")["paths"], "src/b.py,notes/sub/docs%2Fa%25b.md")
+
+    def test_set_change_note_dir_refuses_a_bad_flag_value_and_writes_nothing(self):
+        self.open()
+        for text in ("/abs", "../up", "a/../..", "a,b", "has space"):
+            with self.subTest(text=text):
+                before = self.store_files()
+                error = self.brigade("set", "--change-note-dir", text, ok=False)
+                self.assertIn("--change-note-dir", error)
+                self.assertIn(f"got '{text}'", error)
+                self.assertEqual(self.store_files(), before)
+
+    def test_a_fire_refuses_a_stored_change_note_dir_that_does_not_parse_and_writes_nothing(self):
+        self.open()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
+        for stored in ("/abs", "../up", "a,b", "has space", 5, ["changes"]):
+            with self.subTest(stored=stored):
+                self.write_meta(changeNoteDir=stored)
+                before = self.store_files()
+                error = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
+                                     "--paths", "src", ok=False)
+                self.assertIn("changeNoteDir", error)
+                self.assertEqual(self.store_files(), before)
+
+    def test_set_refuses_a_malformed_change_note_dir_while_changing_another_setting(self):
+        self.open()
+        self.write_meta(changeNoteDir="/abs")
+        before = self.store_files()
+        error = self.brigade("set", "--reporting", "digest", ok=False)
+        self.assertIn("changeNoteDir", error)
+        self.assertEqual(self.store_files(), before)
+
+    def test_set_clears_change_note_dir_with_an_empty_value(self):
+        self.open()
+        self.brigade("set", "--change-note-dir", "changes")
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["changeNoteDir"], "changes")
+        self.brigade("set", "--change-note-dir", "")
+        self.assertNotIn("changeNoteDir", json.loads((self.at / "restaurant.json").read_text()))
