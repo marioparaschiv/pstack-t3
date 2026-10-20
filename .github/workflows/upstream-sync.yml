@@ -30,6 +30,6 @@ jobs:
             exit 0
           fi
 
-          gh pr create -R "$REPO" --base mine --head creedants:main \
+          gh pr create -R "$REPO" --base mine --head creedants:main --no-maintainer-edit \
             --title "Sync upstream pstack-t3 ($ahead commits)" \
             --body "Automated: merges \`$UPSTREAM\` main into \`mine\`. Resolve conflicts with your local changes before merging."
