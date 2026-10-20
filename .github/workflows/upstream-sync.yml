@@ -1,0 +1,35 @@
+name: upstream-sync
+
+# Opens (or refreshes) one PR from creedants/pstack-t3 main into this fork's `mine` branch.
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      UPSTREAM: creedants/pstack-t3
+    steps:
+      - name: open PR when upstream is ahead
+        run: |
+          ahead=$(gh api "repos/$REPO/compare/mine...creedants:pstack-t3:main" -q .ahead_by)
+          echo "upstream is $ahead commits ahead of mine"
+          [ "$ahead" -gt 0 ] || exit 0
+
+          open=$(gh pr list -R "$REPO" --base mine --head creedants:main --state open --json number -q '.[0].number')
+          if [ -n "$open" ]; then
+            echo "PR #$open already open; it tracks upstream main automatically"
+            exit 0
+          fi
+
+          gh pr create -R "$REPO" --base mine --head creedants:main \
+            --title "Sync upstream pstack-t3 ($ahead commits)" \
+            --body "Automated: merges \`$UPSTREAM\` main into \`mine\`. Resolve conflicts with your local changes before merging."
