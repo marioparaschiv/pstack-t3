@@ -23,7 +23,7 @@ Bookkeeping for brigade restaurants.
 ## brigade.py open
 
 ```text
-brigade.py [flags] open --project-root PROJECT_ROOT [--name NAME] [--admin] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
+brigade.py [flags] open --project-root PROJECT_ROOT [--name NAME] [--rename NAME] [--admin] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
 ```
 
 create a restaurant, or print an existing one
@@ -32,12 +32,13 @@ create a restaurant, or print an existing one
 | --- | --- | --- | --- | --- |
 | `--project-root PROJECT_ROOT` | yes |  |  |  |
 | `--name NAME` |  |  |  |  |
+| `--rename NAME` |  |  |  | rename the --name restaurant and move its store; refused while landing work or an item is held |
 | `--admin` |  |  |  | open the repository's executive admin at \<project>/.admin; takes no --name |
 | `--reporting REPORTING` |  | `every-turn`, `milestones`, `digest` | `milestones` | how often the coordinator replies (default: milestones) |
 | `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns, such as github |
 | `--workers WORKERS` |  |  |  | how many dishes may be in progress or in review; missing reads as 2 |
 | `--mode MODE` |  | `full`, `light` |  | this restaurant's light or full mode; missing leaves it to the roles files |
-| `--context-cap CONTEXT_CAP` |  |  |  | on creation, set the context cap; missing uses 300000, except claude adopts an existing integer autoCompactWindow from the project's .claude/settings.local.json; claude attempts to write the cap there unless adopting it; an existing store is left alone |
+| `--context-cap CONTEXT_CAP` |  |  |  | on creation, set the context cap; missing reads as 300000; creation with a cap, or with an explicit provider, writes the cap to the project's .claude/settings.local.json when the provider is claude, replacing any autoCompactWindow already there; a plain open writes nothing under the project root; an existing store is left alone |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | on creation, choose claude or other; missing uses claude; an existing store uses its saved provider |
 
 ## brigade.py set
@@ -73,7 +74,7 @@ record the head chef thread, a schedule id, or the reporting level
 | `--affected-tests JSON` |  |  |  | JSON object or JSON file for the affectedTests layout; "" clears it; - reads stdin |
 | `--shared-docs JSON` |  |  |  | JSON list or JSON file for the sharedDocs catalog; "" clears it; - reads stdin |
 | `--doc-timebox N` |  |  |  | the shared-document timebox in minutes, a whole number of 1 or more; "" clears it to 90 |
-| `--context-cap CONTEXT_CAP` |  |  |  | the auto-compact window written to .claude/settings.local.json; "" clears it to 300000 |
+| `--context-cap CONTEXT_CAP` |  |  |  | the auto-compact window written to .claude/settings.local.json when the provider is claude; "" clears it to 300000 |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | claude or other; "" clears it to claude; other writes no settings file |
 
 ## brigade.py ticket
@@ -84,7 +85,7 @@ brigade.py [flags] ticket <action>
 
 add, list, update, move, take, or record paths on tickets on the rail
 
-`<action>` is one of `add`, `list`, `set`, `move`, `take`, `paths`.
+`<action>` is one of `add`, `list`, `set`, `move`, `take`, `paths`, `notes`.
 
 ## brigade.py ticket add
 
@@ -95,8 +96,8 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--summary SUMMARY` |  |  |  |  |
-| `--from-report FILE` |  |  |  | an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it and changes only the ticket table, the log, and lastActivityAt; each ticket takes the goal of the report's item, and when that item has a kind the ticket takes fix at priority urgent or normal and polish at low; a follow-up is filed with no --priority, so it is low |
-| `--dry-run` |  |  |  | with --from-report: print what it would add; it changes no table and no log |
+| `--from-report FILE` |  |  |  | an item report under reports/, such as reports/D2.md; files at most one waiting ticket per item, and only when no ticket from that report exists yet, for the first follow-up marked Safety:, Privacy:, or Correctness: whose text is not on the rail; case does not count; any other marked follow-up whose text is not on the rail prints not filed and goes to notes.tsv; every other follow-up whose text is not on the rail goes to notes.tsv keyed by the tracked paths it quotes; changes the ticket table, the log, and lastActivityAt when it files a ticket, and notes.tsv when it notes one; each ticket takes the goal of the report's item, and when that item has a kind the ticket takes fix at priority urgent or normal and polish at low; a follow-up is filed with no --priority, so it is low |
+| `--dry-run` |  |  |  | with --from-report: print what it would add or note, and what is already noted; it changes no store file |
 | `--source SOURCE` |  |  | `user` |  |
 | `--ref REF` |  |  |  |  |
 | `--request REQUEST` |  |  |  | the admin request id this ticket carries out; refuses a second ticket for it |
@@ -170,6 +171,21 @@ record the tracked paths each waiting ticket's summary quotes, on tickets that r
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--dry-run` |  |  |  | print what it would record; it changes no table |
+
+## brigade.py ticket notes
+
+```text
+brigade.py [flags] ticket notes (--paths PATHS | --all)
+```
+
+list the follow-ups the store noted instead of filing as tickets
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--paths PATHS` |  |  |  | comma-separated files and directories; prints the notes that name them |
+| `--all` |  |  |  | prints every note |
+
+Give exactly one of `--paths`, `--all`.
 
 ## brigade.py goal
 

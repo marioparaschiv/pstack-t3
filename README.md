@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/creedants/pstack-t3/actions/workflows/ci.yml"><img src="https://github.com/creedants/pstack-t3/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license: MIT"></a>
-  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-0.15.29-555.svg" alt="upstream pstack 0.15.29"></a>
+  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-0.15.30-555.svg" alt="upstream pstack 0.15.30"></a>
   <a href="https://github.com/creedants/pstack-t3/releases"><img src="https://img.shields.io/github/v/release/creedants/pstack-t3" alt="release"></a>
 </p>
 
@@ -29,7 +29,7 @@ pstack is Lauren Tan's (poteto) set of skills, playbooks, and principles for car
 
 ### Staying current
 
-The maintainers keep a byte-identical copy of the pinned upstream commit and re-port each file the port changes when upstream moves. pstack-t3's runtime and setup text name the T3 Code releases they need. Setup needs T3 Code 0.1.0 or later. See [How it works](docs/how-it-works.md) for the layers.
+The maintainers keep a byte-identical copy of the pinned upstream commit and re-port each file the port changes when upstream moves. pstack-t3 tracks upstream's `pstack/` path only and lists excluded upstream paths in `upstream.json`. pstack-t3's runtime and setup text name the T3 Code releases they need. Setup needs T3 Code 0.1.0 or later. See [How it works](docs/how-it-works.md) for the layers.
 
 ## What it does
 
@@ -43,6 +43,8 @@ The maintainers keep a byte-identical copy of the pinned upstream commit and re-
 
 Start with [1. Install (two minutes)](docs/guide.md#1-install-two-minutes).
 
-See [all 61 skills and every playbook](docs/skills.md).
+New to coordinators? Start with [your first coordinator in about 20 minutes](docs/first-coordinator.md) to land one change on a throwaway repository.
+
+See [all 62 skills and every playbook](docs/skills.md).
 
 pstack is by [Lauren Tan (poteto)](https://x.com/poteto). MIT licensed. See [LICENSE](LICENSE).

@@ -1,26 +1,10 @@
-import argparse
-import fcntl
-import fnmatch
-import functools
-import hashlib
-import io
-import json
-import os
-import posixpath
 import re
-import runpy
-import shlex
-import stat
 import subprocess
 import sys
-import tarfile
-import tempfile
-import time
-from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from brigade_lib import seam
+from brigade_lib._store import rules
 from brigade_lib.affected import layout as affected_layout, verify_text as affected_verify_text
 from brigade_lib.items import attempt_kind, latest_mode_note, menu_purpose, record_escalation
 from brigade_lib.leases import kind_limits
@@ -60,7 +44,6 @@ _RULES = (
     ),
 )
 STANDING_PLACEHOLDER = re.compile(r"<([a-z]+)>")
-HOUSE_RULE_TAG = re.compile(r"\[(worker|reviewer|coordinator)\](?: )?")
 ESCALATED = "escalated: "
 MODE_RESOLUTIONS = 3
 SEAT_RULE = ("Seat rule. Copy the Mode value above into --brief-mode on every roles.py mode and roles.py show call you make, "
@@ -132,6 +115,10 @@ def brief_dish(restaurant, ident, paths, lease, acceptance):
     if not thread:
         raise BrigadeError("no coordinator thread recorded; run brigade.py set --thread")
     menu_purpose(restaurant)
+    rules.house_rules(restaurant.dir / "house-rules.md")
+    lines = house_rules_cap_lines(restaurant)
+    if lines:
+        raise BrigadeError("\n".join(lines))
     return dish, paths, lease, thread
 
 
@@ -263,34 +250,23 @@ def standing_rules(restaurant, context, verify):
 
 
 def worker_house_rules(text):
-    """The house rules a worker brief carries.
+    """The house rules a worker brief carries. A rule tagged for another role is left out, and a worker tag and at most one space after it are removed."""
+    return rules.for_role("worker", text)
 
-    A rule is a line that starts at column 0 and the indented or blank lines under it. A rule whose
-    first line's first role tag is `[reviewer]` or `[coordinator]` is left out. One whose first tag is
-    `[worker]` keeps its place and loses that tag and the one space after it. Every other rule is kept
-    as it is, so a store with no tags renders the text it held before.
-    """
-    rules, current = [], []
-    for line in text.strip().split("\n"):
-        if line[:1] not in ("", " ", "\t") and current:
-            rules.append(current)
-            current = []
-        current.append(line)
-    rules.append(current)
-    kept = []
-    for lines in rules:
-        tag = HOUSE_RULE_TAG.search(lines[0])
-        if tag and tag.group(1) != "worker":
-            continue
-        if tag:
-            lines[0] = HOUSE_RULE_TAG.sub("", lines[0], count=1)
-        kept.append("\n".join(lines))
-    return "\n".join(kept)
+
+def house_rules_cap_lines(restaurant):
+    """One line for each role whose house rules exceed the store's houseRulesCap."""
+    cap = rules.cap_of(restaurant.meta)
+    if cap is None:
+        return ()
+    path = restaurant.dir / "house-rules.md"
+    return rules.breach_lines(cap, path.read_text() if path.is_file() else "")
 
 
 def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, paths, lease, base, context, thread,
                 picked_layout):
     ident = dish["id"]
+    standing_orders = rules.house_rules(restaurant.dir / "house-rules.md")
     if not dish["branch"]:
         dish = restaurant.update("dishes.tsv", ident, "dish", branch=f"{slug(restaurant.meta['restaurant'])}/{ident.lower()}")
     tickets = {row["id"]: row for row in restaurant.rows("rail.tsv")}
@@ -303,7 +279,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         f"Use the poteto-mode skill and its `{dish['station']}` playbook.", *mode.lines, "Gate: brigade", SEAT_RULE, "",
         f"GOAL: {goal}",
         f"PURPOSE: {menu_purpose(restaurant)}",
-        f"TICKETS: " + "; ".join(f"{t}: {tickets[t]['summary']}" for t in dish["tickets"].split(",") if t in tickets), "",
+        "TICKETS: " + "; ".join(f"{t}: {tickets[t]['summary']}" for t in dish["tickets"].split(",") if t in tickets), "",
         "SCOPE:",
         f"- You run in your own git worktree on branch `{dish['branch']}`, started from `{base}`. Work only there, and commit on that branch.",
         f"- Change only these paths, leased to you as {lease}: {paths}. A change outside them is refused when it lands. Report it instead of making it.",
@@ -322,14 +298,18 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         WAIT_RULE,
         f"- Write it to {report}: status, branch, head SHA, what you ran and its output, before and after numbers with the method, deviations, follow-ups. "
         "List each follow-up as one top-level list item under a `## Follow-ups` heading, or write `None.` there. "
+        "Mark a follow-up that is safety, privacy, or correctness with `Safety:`, `Privacy:`, or `Correctness:` at the start of its text, after any list marker. "
+        "Only a marked follow-up can become a ticket, at most one per item. "
+        "Every other follow-up goes to the store's notes ledger, unless its text is already on the rail. "
         "Name each file a follow-up touches by its repository path in backticks.",
         "- Hold a `## Threads` section with one list item per child of the form - <role> `<thread id>` <seat>. The role is one of code delegate, claims check, and architect runner, named literally. The seat is one bare provider/model token with nothing after it and no backticks around it. That means no reasoning level, no note, and no effort word after the seat. List only code delegate, claims check, and architect runner under ## Threads. Put every other child under ## Notes. List only T3 threads started with `delegate_task` or `t3_thread_launch` for those threads. For example, the line - code delegate `mcp:00000000-0000-4000-8000-000000000001` opencode-go/step-5-preview-free parses as one child with no unreadable line. Name a child run inside the worker's own harness in the report body instead, never in the section. A missing section adds no row and is not an error. The worker still writes the section when it used a child.",
         "- Under the status line, repeat this brief's Mode: line, and its Waived by mode: line when it has one. A step that line names is not a deviation.",
         *(["- If you find the design contested, do not run interrogate. Stop at a verifiable point, commit, and write Contested: <one-line reason> under the status line. The coordinator moves the work to full mode and gives your report to a fresh worker."]
           if mode.mode == "light" else []),
         f"- After that file is written, call t3_thread_send to thread {thread} with mode \"auto\" and the one-line message \"{ident} done: report at {report}\".",
+        "- If `t3_thread_send` returns thread_not_found, read the thread id again from this brief file, copy it exactly, and retry once; name both attempts in the final message.",
         "- Then end your turn with one line naming the report path.",
-        "", "STANDING ORDERS:", worker_house_rules((restaurant.dir / "house-rules.md").read_text()),
+        "", "STANDING ORDERS:", worker_house_rules(standing_orders),
     ]
     text = "\n".join(lines) + "\n"
     restaurant.write(contract_file(ident), contract + "\n")

@@ -3,6 +3,8 @@
 This walks through installing pstack-t3, choosing models, and running real work in T3 Code. For the philosophy behind the workflows, Lauren Tan's [original pstack guide](../vendor/pstack/docs/guide/README.md) is the deep read. It is written for Cursor, but the ideas carry over unchanged.
 
 
+To land one change end to end on a throwaway repository, follow [First coordinator](first-coordinator.md).
+
 Part of the pstack-t3 docs. Each part below names its file. Read the part it names for the full rule.
 ## 1. Install (two minutes)
 
@@ -24,7 +26,7 @@ python3 scripts/install.py
 python3 scripts/install.py doctor
 ```
 
-`doctor` should show `61/61 pstack-t3` for each provider you use. If it reports other copies of the same skills, you have an older pstack installed. Rerun with `python3 scripts/install.py --replace` to move it aside. `uninstall` puts it back when it can do so without overwriting anything, as the [Uninstall](guide/uninstall.md#uninstall) section describes.
+`doctor` should show `62/62 pstack-t3` for each provider you use. If it reports other copies of the same skills, you have an older pstack installed. Rerun with `python3 scripts/install.py --replace` to move it aside. `uninstall` puts it back when it can do so without overwriting anything, as the [Uninstall](guide/uninstall.md#uninstall) section describes.
 
 `install` exits 3 when the run printed a line that begins `skipped`, as the **A skipped step exits 3.** bullet under [Uninstall](guide/uninstall.md#uninstall) describes.
 

@@ -8,7 +8,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -19,6 +18,7 @@ from tests.brigade.support import BrigadeTest, ProcessReason, SCRIPT, real_proce
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "scripts/release.py"
+NOTES = ROOT / "scripts/release_notes.py"
 CHANGELOG = "# Changelog\n\n## 0.4.1 (2026-10-07)\n\n- old\n"
 FRAGMENTS = {"changes/one.md": "- kind feature\n- one\n  one continued\n",
              "changes/two.md": "- kind fix\n- two\n",
@@ -34,6 +34,7 @@ ENV = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_NOSYSTEM": "1",
     "LC_ALL": "C",
+    "PYTHONDONTWRITEBYTECODE": "1",
 }
 
 
@@ -156,10 +157,11 @@ class SpendControlsTest(BrigadeTest):
 class OpenFlagHelpTest(BrigadeTest):
     """The two creation-only flags, as the open help states them to a user reopening a store."""
 
-    CAP_HELP = ("--context-cap CONTEXT_CAP on creation, set the context cap; missing uses 300000, "
-                "except claude adopts an existing integer autoCompactWindow from the project's "
-                ".claude/settings.local.json; claude attempts to write the cap there unless adopting it; "
-                "an existing store is left alone")
+    CAP_HELP = ("--context-cap CONTEXT_CAP on creation, set the context cap; missing reads as 300000; "
+                "creation with a cap, or with an explicit provider, writes the cap to the project's "
+                ".claude/settings.local.json when the provider is claude, replacing any autoCompactWindow "
+                "already there; a plain open writes nothing under the project root; an existing store is "
+                "left alone")
     PROVIDER_HELP = ("--coordinator-provider COORDINATOR_PROVIDER on creation, choose claude or other; "
                      "missing uses claude; an existing store uses its saved provider")
 
@@ -170,6 +172,21 @@ class OpenFlagHelpTest(BrigadeTest):
         words = " ".join(result.stdout.split())
         self.assertIn(self.CAP_HELP, words)
         self.assertIn(self.PROVIDER_HELP, words)
+
+
+class SetContextCapHelpTest(BrigadeTest):
+    """The context cap setting, as the set help states it."""
+
+    CAP_HELP = ('--context-cap CONTEXT_CAP the auto-compact window written to .claude/settings.local.json '
+                'when the provider is claude; "" clears it to 300000')
+
+    def test_set_help_states_the_window_path_and_the_empty_value_that_clears_to_300000(self):
+        # --help output
+        result = real_process(ProcessReason.HELP, SCRIPT, ["set", "--help"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        words = " ".join(result.stdout.split())
+        cap_help = words.split("--context-cap CONTEXT_CAP ", 1)[1].split(" --coordinator-provider ", 1)[0]
+        self.assertEqual(self.CAP_HELP, "--context-cap CONTEXT_CAP " + cap_help)
 
 
 class ReleaseSectionsTest(unittest.TestCase):
@@ -183,6 +200,7 @@ class ReleaseSectionsTest(unittest.TestCase):
             git(repo, "init", "-q", "-b", "main")
             (repo / "scripts").mkdir()
             shutil.copy(RELEASE, repo / "scripts/release.py")
+            shutil.copy(NOTES, repo / "scripts/release_notes.py")
             yield repo
 
     def run_release(self, repo, *args):

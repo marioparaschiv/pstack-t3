@@ -149,7 +149,7 @@ Light behavior lives in [light.md](light.md#light-behavior).
 
 - Tests and the build. The worker runs the project's test command and build before every gate review, and the landing queue reruns them.
 - The landing queue's checks.
-- One review by another model family at every head SHA before merge, per [Gate review](#gate-review).
+- One review at every head SHA before merge, per [Gate review](#gate-review), cross-family unless its same-family fallback applies.
 - A review reads the whole diff against its base on round one. A later round reads the fix diff since the last reviewed SHA, per [Rounds after the first](../brigade/verdict-protocol.md#rounds-after-the-first).
 - Owner fences. Leases, `--owner` generations, worktrees, and the pass-at-head gate.
 - A fresh worker for every send-back, per [Fresh children by default](#fresh-children-by-default).
@@ -162,7 +162,7 @@ The gate procedure lives in [light.md](light.md#gate-review).
 
 ### Announcement
 
-When light mode applies, say so once, at the start, in two or three short sentences. Name the source from the `Mode source:` line, what this work cuts, and what still runs, as in "Light mode is on, from this session. This change gets one design sketch and no separate comment review. Tests, the build, and a review by another model family still run." On an escalation, name the rule, as in "This change runs in full mode because its lease covers `land.py`." A worker's report repeats its brief's `Mode:` and `Waived by mode:` lines under its status. A step that line names is not a deviation. Name the mode again only when it changes.
+When light mode applies, say so once, at the start, in two or three short sentences. Name the source from the `Mode source:` line, what this work cuts, and what still runs, as in "Light mode is on, from this session. This change gets one design sketch and no separate comment review. Tests, the build, and review run, with a fallback if only the author's family can run." On an escalation, name the rule, as in "This change runs in full mode because its lease covers `land.py`." A worker's report repeats its brief's `Mode:` and `Waived by mode:` lines under its status. A step that line names is not a deviation. Name the mode again only when it changes.
 
 ## Isolation
 

@@ -58,12 +58,12 @@ class CiJobsMixin:
                 body = job_body(text.splitlines(keepends=True), f"macos_312_{index}")
                 self.assertIsNotNone(body)
                 joined = "".join(body)
-                self.assertNotIn("if:", joined)
                 self.assertNotIn("strategy", joined)
                 self.assertNotIn("env:", joined)
                 self.assertNotIn("needs:", joined)
                 self.assertIn(f"name: macOS (3.12, {index}/4)", joined)
                 self.assertIn("macos-latest", joined)
+                self.assertIn("if: github.event_name == 'push'", joined)
                 self.assertEqual(joined.count(f"python3 scripts/run_tests.py --part {index}/4"), 1)
                 self.assertNotIn("--real-process-share", joined)
                 self.assertIn("grep -E '^Ran [0-9]+ tests? in '", joined)
@@ -134,26 +134,27 @@ class CiJobsMixin:
             macos = jobs[f"macos_312_{index}"]
             self.assertEqual(macos["name"], f"macOS (3.12, {index}/4)")
             self.assertEqual(macos["runs-on"], "macos-latest")
-            self.assertNotIn("if", macos)
+            self.assertEqual(macos.get("if"), "github.event_name == 'push'", "macos if pins the push-only rule.")
             self.assertNotIn("strategy", macos)
             self.assertNotIn("needs", macos)
             self.assertNotIn("env", macos)
             steps = macos["steps"]
-            self.assertEqual(len(steps), 5 if index == 1 else 4)
+            self.assertEqual(len(steps), 6 if index == 1 else 5)
             self.assertEqual(steps[0].get("uses"), "actions/checkout@v7")
             self.assertEqual(steps[1].get("uses"), "actions/setup-python@v7")
             self.assertEqual(steps[1]["with"]["python-version"], "3.12")
             self.assertIsInstance(steps[1]["with"]["python-version"], str)
             self.assertEqual(steps[2].get("run"), "pip install pyyaml")
-            self.assertEqual(steps[3].get("name"), f"Test part {index}/4")
-            self.assertEqual(steps[3]["run"], macos_part_run(index))
-            self.assertNotIn("--real-process-share", steps[3]["run"])
+            self.assertIn("select_browser", steps[3]["run"])
+            self.assertEqual(steps[4].get("name"), f"Test part {index}/4")
+            self.assertEqual(steps[4]["run"], macos_part_run(index))
+            self.assertNotIn("--real-process-share", steps[4]["run"])
             if index == 1:
-                self.assertEqual(steps[4].get("name"), "Generated skills match the sources")
-                self.assertNotIn("if", steps[4])
+                self.assertEqual(steps[5].get("name"), "Generated skills match the sources")
+                self.assertNotIn("if", steps[5])
                 gate_skill = next(step for step in jobs["test_312"]["steps"]
                                   if step.get("name") == "Generated skills match the sources")
-                self.assertEqual(steps[4]["run"], gate_skill["run"])
+                self.assertEqual(steps[5]["run"], gate_skill["run"])
 
     def test_the_browser_step_creates_its_temporary_directory_with_ignore_cleanup_errors(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
@@ -183,4 +184,20 @@ class CiJobsMixin:
                 runs = [step["run"] for step in jobs[f"{prefix}_{index}"]["steps"] if "run" in step]
                 self.assertEqual(runs[1].count("select_browser(directory)"), 1)
                 self.assertEqual(runs[1].count("select_browser(directory, timeout=60)"), 1)
+
+    def test_the_workflow_concurrency_group_is_the_workflow_and_ref_with_cancel_in_progress(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        try:
+            import yaml
+        except ImportError:
+            lines = text.splitlines()
+            self.assertIn("concurrency:", lines)
+            start = lines.index("concurrency:")
+            self.assertEqual(lines[start + 1], "  group: ${{ github.workflow }}-${{ github.ref }}")
+            self.assertEqual(lines[start + 2], "  cancel-in-progress: true")
+            return
+        block = yaml.safe_load(text).get("concurrency")
+        self.assertIsNotNone(block, "concurrency block is present.")
+        self.assertEqual(block["group"], "${{ github.workflow }}-${{ github.ref }}", "concurrency group pins the workflow and ref.")
+        self.assertIs(block["cancel-in-progress"], True, "cancel-in-progress pins true.")
 

@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib._store.opening import rename_restaurant
 from brigade_lib.affected import layout
 from brigade_lib.compact import _load, drift_line, effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
 from brigade_lib.items import doc_policy
@@ -93,6 +94,7 @@ def register_open(sub):
     p = sub.add_parser("open", help="create a restaurant, or print an existing one")
     p.add_argument("--project-root", required=True)
     p.add_argument("--name")
+    p.add_argument("--rename", metavar="NAME", help="rename the --name restaurant and move its store; refused while landing work or an item is held")
     p.add_argument("--admin", action="store_true", help="open the repository's executive admin at <project>/.admin; takes no --name")
     p.add_argument("--reporting", choices=REPORTING, default="milestones",
                    help="how often the coordinator replies (default: milestones)")
@@ -100,7 +102,7 @@ def register_open(sub):
     p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review; missing reads as 2")
     p.add_argument("--mode", choices=MODES, help="this restaurant's light or full mode; missing leaves it to the roles files")
     p.add_argument("--context-cap", default=None,
-                   help="on creation, set the context cap; missing uses 300000, except claude adopts an existing integer autoCompactWindow from the project's .claude/settings.local.json; claude attempts to write the cap there unless adopting it; an existing store is left alone")
+                   help="on creation, set the context cap; missing reads as 300000; creation with a cap, or with an explicit provider, writes the cap to the project's .claude/settings.local.json when the provider is claude, replacing any autoCompactWindow already there; a plain open writes nothing under the project root; an existing store is left alone")
     p.add_argument("--coordinator-provider", default=None,
                    help="on creation, choose claude or other; missing uses claude; an existing store uses its saved provider")
 
@@ -152,7 +154,7 @@ def register_set(sub):
     p.add_argument("--doc-timebox", metavar="N",
                    help="the shared-document timebox in minutes, a whole number of 1 or more; \"\" clears it to 90")
     p.add_argument("--context-cap", default=None,
-                   help="the auto-compact window written to .claude/settings.local.json; \"\" clears it to 300000")
+                   help="the auto-compact window written to .claude/settings.local.json when the provider is claude; \"\" clears it to 300000")
     p.add_argument("--coordinator-provider", default=None,
                    help="claude or other; \"\" clears it to claude; other writes no settings file")
 
@@ -196,6 +198,8 @@ def handle_open(args, root):
         raise BrigadeError("open --admin takes no --name")
     if not args.admin and not args.name:
         raise BrigadeError("open needs --name, or --admin")
+    if args.rename is not None:
+        return rename_restaurant(root, args)
     require_workers(args.workers)
     context_cap = None
     if args.context_cap not in (None, ""):
